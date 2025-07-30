@@ -40,9 +40,10 @@ class block_validacursos extends block_base {
      * @return array
      */
     private function obtener_validaciones($course, $config) {
+        global $DB;
         $validaciones = [];
 
-        // Validación de fecha de inicio.
+        // Validación fecha.
         $validafecha = !empty($course->startdate) && !empty($config->fechainiciovalidacion)
             && $this->fechas_son_iguales($course->startdate, $config->fechainiciovalidacion);
 
@@ -51,76 +52,71 @@ class block_validacursos extends block_base {
             'estado' => $validafecha,
             'mensaje' => $validafecha ? 'Fecha Inicio validada' : 'Fecha Inicio NO validada',
             'detalle' => [
-                'Curso' => !empty($course->startdate) ? userdate($course->startdate, get_string('strftimedatetime', 'langconfig')) : get_string('notavailable', 'moodle'),
-                'Configuración' => !empty($config->fechainiciovalidacion) ? userdate($config->fechainiciovalidacion, get_string('strftimedatetime', 'langconfig')) : get_string('notavailable', 'moodle')
+                'Curso' => !empty($course->startdate) ? userdate($course->startdate) : get_string('notavailable', 'moodle'),
+                'Configuración' => !empty($config->fechainiciovalidacion) ? userdate($config->fechainiciovalidacion) : get_string('notavailable', 'moodle')
             ]
         ];
 
-        // Obtener el id de la primera sección del curso.
-        global $DB;
-        $section0 = $DB->get_record('course_sections', [
-            'course' => $course->id,
-            'section' => 0
-        ]);
+        // Sección 0
+        $section0 = $DB->get_record('course_sections', ['course' => $course->id, 'section' => 0]);
         $section0id = $section0 ? $section0->id : null;
 
-        // Validación de foro de anuncios llamado "Tablón de anuncios" en la primera sección.
-        $foro = $DB->get_record('forum', [
-            'course' => $course->id,
-            'type' => 'news',
-            'name' => 'Tablón de anuncios'
-        ]);
-        $foro_en_primera_seccion = false;
-        if (!empty($foro) && $section0id) {
-            $cm = $DB->get_record('course_modules', [
-                'course' => $course->id,
-                'instance' => $foro->id,
-                'module' => $DB->get_field('modules', 'id', ['name' => 'forum'])
-            ]);
-            $foro_en_primera_seccion = !empty($cm) && $cm->section == $section0id;
+        // ID módulo foro (una sola vez)
+        $forum_module_id = $DB->get_field('modules', 'id', ['name' => 'forum'], MUST_EXIST);
+
+        // Todos los foros del curso
+        $foros = $DB->get_records('forum', ['course' => $course->id]);
+
+        // Todos los course_modules de foros
+        $cms = $DB->get_records('course_modules', ['course' => $course->id, 'module' => $forum_module_id]);
+        $cms_by_instance = [];
+        foreach ($cms as $cm) {
+            $cms_by_instance[$cm->instance] = $cm;
         }
 
-        $validaciones[] = [
-            'nombre' => 'Foro de anuncios',
-            'estado' => $foro_en_primera_seccion,
-            'mensaje' => $foro_en_primera_seccion
-                ? 'Existe el foro "Tablón de anuncios" en la primera sección'
-                : 'No existe el foro "Tablón de anuncios" en la primera sección',
-            'detalle' => [
-                'Nombre buscado' => 'Tablón de anuncios',
-                'Estado' => !empty($foro) ? ($foro_en_primera_seccion ? 'Encontrado en la primera sección' : 'No está en la primera sección') : 'No encontrado'
+        // Lista de validaciones de foros
+        $foros_a_validar = [
+            [
+                'nombre' => 'Tablón de anuncios',
+                'type'   => 'news',
+                'titulo' => 'Tablón de anuncios'
+            ],
+            [
+                'nombre' => 'Foro de comunicación entre estudiantes',
+                'type'   => 'general',
+                'titulo' => 'Foro de comunicación entre estudiantes'
+            ],
+            [
+                'nombre' => 'Foro de tutorías de la asignatura',
+                'type'   => 'general',
+                'titulo' => 'Foro de tutorías de la asignatura'
             ]
         ];
 
-        // Validación de foro normal llamado "Foro de comunicación entre estudiantes" en la primera sección.
-        $forocom = $DB->get_record('forum', [
-            'course' => $course->id,
-            'type' => 'general',
-            'name' => 'Foro de comunicación entre estudiantes'
-        ]);
-        $forocom_en_primera_seccion = false;
-        if (!empty($forocom) && $section0id) {
-            $cmcom = $DB->get_record('course_modules', [
-                'course' => $course->id,
-                'instance' => $forocom->id,
-                'module' => $DB->get_field('modules', 'id', ['name' => 'forum'])
-            ]);
-            $forocom_en_primera_seccion = !empty($cmcom) && $cmcom->section == $section0id;
+        foreach ($foros_a_validar as $finfo) {
+            $foro_ok = false;
+            foreach ($foros as $f) {
+                if ($f->type === $finfo['type'] && $f->name === $finfo['titulo']) {
+                    $cm = $cms_by_instance[$f->id] ?? null;
+                    if ($cm && $cm->section == $section0id) {
+                        $foro_ok = true;
+                    }
+                    break;
+                }
+            }
+
+            $validaciones[] = [
+                'nombre' => $finfo['nombre'],
+                'estado' => $foro_ok,
+                'mensaje' => $foro_ok
+                    ? "Validado"
+                    : "No validado",
+                'detalle' => [
+                    'Nombre buscado' => $finfo['titulo'],
+                    'Estado' => $foro_ok ? 'Encontrado en la primera sección' : 'No encontrado o fuera de sección'
+                ]
+            ];
         }
-
-        $validaciones[] = [
-            'nombre' => 'Foro de comunicación entre estudiantes',
-            'estado' => $forocom_en_primera_seccion,
-            'mensaje' => $forocom_en_primera_seccion
-                ? 'Existe el foro "Foro de comunicación entre estudiantes" en la primera sección'
-                : 'No existe el foro "Foro de comunicación entre estudiantes" en la primera sección',
-            'detalle' => [
-                'Nombre buscado' => 'Foro de comunicación entre estudiantes',
-                'Estado' => !empty($forocom) ? ($forocom_en_primera_seccion ? 'Encontrado en la primera sección' : 'No está en la primera sección') : 'No encontrado'
-            ]
-        ];
-
-        // Aquí puedes añadir más validaciones en el futuro.
 
         return $validaciones;
     }
@@ -146,7 +142,7 @@ class block_validacursos extends block_base {
             $color = $val['estado'] ? 'green' : 'red';
             $html .= '<div style="margin-bottom:6px;">';
             $html .= '<span style="cursor:pointer;color:' . $color . ';font-size:1.2em;vertical-align:middle;" onclick="var d=document.getElementById(\'' . $iconoid . '\');d.style.display=d.style.display==\'none\'?\'block\':\'none\';">&#9679;</span> ';
-            $html .= '<span style="cursor:pointer;vertical-align:middle;" onclick="var d=document.getElementById(\'' . $iconoid . '\');d.style.display=d.style.display==\'none\'?\'block\':\'none\';">' . $val['mensaje'] . '</span>';
+            $html .= '<span style="cursor:pointer;vertical-align:middle;" onclick="var d=document.getElementById(\'' . $iconoid . '\');d.style.display=d.style.display==\'none\'?\'block\':\'none\';">' . $val['nombre'] . '</span>';
             $html .= '<div id="' . $iconoid . '" style="display:none;margin-top:4px;padding:6px;border:1px solid #ccc;background:#f9f9f9;font-size:0.95em;">';
             foreach ($val['detalle'] as $label => $valor) {
                 $html .= '<strong>' . $label . ':</strong> ' . $valor . '<br>';
