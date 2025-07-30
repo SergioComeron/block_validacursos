@@ -29,7 +29,100 @@ class block_validacursos extends block_base {
      * Block initialisation
      */
     public function init() {
-        $this->title = get_string('pluginname', 'block_validacursos');
+        $this->title = '';
+    }
+
+    /**
+     * Ejecuta todas las validaciones y devuelve un array con los resultados.
+     *
+     * @param object $course
+     * @param object $config
+     * @return array
+     */
+    private function obtener_validaciones($course, $config) {
+        $validaciones = [];
+
+        // Validación de fecha de inicio.
+        $validafecha = !empty($course->startdate) && !empty($config->fechainiciovalidacion)
+            && $this->fechas_son_iguales($course->startdate, $config->fechainiciovalidacion);
+
+        $validaciones[] = [
+            'nombre' => 'Fecha de inicio',
+            'estado' => $validafecha,
+            'mensaje' => $validafecha ? 'Fecha Inicio validada' : 'Fecha Inicio NO validada',
+            'detalle' => [
+                'Curso' => !empty($course->startdate) ? userdate($course->startdate, get_string('strftimedatetime', 'langconfig')) : get_string('notavailable', 'moodle'),
+                'Configuración' => !empty($config->fechainiciovalidacion) ? userdate($config->fechainiciovalidacion, get_string('strftimedatetime', 'langconfig')) : get_string('notavailable', 'moodle')
+            ]
+        ];
+
+        // Obtener el id de la primera sección del curso.
+        global $DB;
+        $section0 = $DB->get_record('course_sections', [
+            'course' => $course->id,
+            'section' => 0
+        ]);
+        $section0id = $section0 ? $section0->id : null;
+
+        // Validación de foro de anuncios llamado "Tablón de anuncios" en la primera sección.
+        $foro = $DB->get_record('forum', [
+            'course' => $course->id,
+            'type' => 'news',
+            'name' => 'Tablón de anuncios'
+        ]);
+        $foro_en_primera_seccion = false;
+        if (!empty($foro) && $section0id) {
+            $cm = $DB->get_record('course_modules', [
+                'course' => $course->id,
+                'instance' => $foro->id,
+                'module' => $DB->get_field('modules', 'id', ['name' => 'forum'])
+            ]);
+            $foro_en_primera_seccion = !empty($cm) && $cm->section == $section0id;
+        }
+
+        $validaciones[] = [
+            'nombre' => 'Foro de anuncios',
+            'estado' => $foro_en_primera_seccion,
+            'mensaje' => $foro_en_primera_seccion
+                ? 'Existe el foro "Tablón de anuncios" en la primera sección'
+                : 'No existe el foro "Tablón de anuncios" en la primera sección',
+            'detalle' => [
+                'Nombre buscado' => 'Tablón de anuncios',
+                'Estado' => !empty($foro) ? ($foro_en_primera_seccion ? 'Encontrado en la primera sección' : 'No está en la primera sección') : 'No encontrado'
+            ]
+        ];
+
+        // Validación de foro normal llamado "Foro de comunicación entre estudiantes" en la primera sección.
+        $forocom = $DB->get_record('forum', [
+            'course' => $course->id,
+            'type' => 'general',
+            'name' => 'Foro de comunicación entre estudiantes'
+        ]);
+        $forocom_en_primera_seccion = false;
+        if (!empty($forocom) && $section0id) {
+            $cmcom = $DB->get_record('course_modules', [
+                'course' => $course->id,
+                'instance' => $forocom->id,
+                'module' => $DB->get_field('modules', 'id', ['name' => 'forum'])
+            ]);
+            $forocom_en_primera_seccion = !empty($cmcom) && $cmcom->section == $section0id;
+        }
+
+        $validaciones[] = [
+            'nombre' => 'Foro de comunicación entre estudiantes',
+            'estado' => $forocom_en_primera_seccion,
+            'mensaje' => $forocom_en_primera_seccion
+                ? 'Existe el foro "Foro de comunicación entre estudiantes" en la primera sección'
+                : 'No existe el foro "Foro de comunicación entre estudiantes" en la primera sección',
+            'detalle' => [
+                'Nombre buscado' => 'Foro de comunicación entre estudiantes',
+                'Estado' => !empty($forocom) ? ($forocom_en_primera_seccion ? 'Encontrado en la primera sección' : 'No está en la primera sección') : 'No encontrado'
+            ]
+        ];
+
+        // Aquí puedes añadir más validaciones en el futuro.
+
+        return $validaciones;
     }
 
     /**
@@ -44,37 +137,26 @@ class block_validacursos extends block_base {
             return $this->content;
         }
 
-        // Formatear la fecha de inicio del curso para el usuario.
-        $fechainicio = !empty($COURSE->startdate)
-            ? userdate($COURSE->startdate, get_string('strftimedatetime', 'langconfig'))
-            : get_string('notavailable', 'moodle');
-
-        // Obtener y formatear la fecha de validación configurada.
         $config = get_config('block_validacursos');
-        $fechavalidacion = !empty($config->fechainiciovalidacion)
-            ? userdate($config->fechainiciovalidacion, get_string('strftimedatetime', 'langconfig'))
-            : get_string('notavailable', 'moodle');
+        $validaciones = $this->obtener_validaciones($COURSE, $config);
 
-        // Validar fechas.
-        $validada = false;
-        if (!empty($COURSE->startdate) && !empty($config->fechainiciovalidacion)) {
-            $validada = $this->fechas_son_iguales($COURSE->startdate, $config->fechainiciovalidacion);
+        $html = '<h4>Valida Cursos</h4>';
+        foreach ($validaciones as $i => $val) {
+            $iconoid = uniqid('validacursos_icono_' . $i . '_');
+            $color = $val['estado'] ? 'green' : 'red';
+            $html .= '<div style="margin-bottom:6px;">';
+            $html .= '<span style="cursor:pointer;color:' . $color . ';font-size:1.2em;vertical-align:middle;" onclick="var d=document.getElementById(\'' . $iconoid . '\');d.style.display=d.style.display==\'none\'?\'block\':\'none\';">&#9679;</span> ';
+            $html .= '<span style="cursor:pointer;vertical-align:middle;" onclick="var d=document.getElementById(\'' . $iconoid . '\');d.style.display=d.style.display==\'none\'?\'block\':\'none\';">' . $val['mensaje'] . '</span>';
+            $html .= '<div id="' . $iconoid . '" style="display:none;margin-top:4px;padding:6px;border:1px solid #ccc;background:#f9f9f9;font-size:0.95em;">';
+            foreach ($val['detalle'] as $label => $valor) {
+                $html .= '<strong>' . $label . ':</strong> ' . $valor . '<br>';
+            }
+            $html .= '</div></div>';
         }
-
-        // Punto verde o rojo con desplegable.
-        $iconoid = uniqid('validacursos_icono_');
-        $icono = '<span style="cursor:pointer;color:' . ($validada ? 'green' : 'red') . ';font-size:1.5em;" onclick="var d=document.getElementById(\'' . $iconoid . '\');d.style.display=d.style.display==\'none\'?\'block\':\'none\';">&#9679;</span> ' .
-                 '<span style="cursor:pointer;" onclick="var d=document.getElementById(\'' . $iconoid . '\');d.style.display=d.style.display==\'none\'?\'block\':\'none\';">' .
-                 ($validada ? 'Fecha Inicio validada' : 'Fecha Inicio NO validada') .
-                 '</span>' .
-                 '<div id="' . $iconoid . '" style="display:none;margin-top:8px;padding:8px;border:1px solid #ccc;background:#f9f9f9;">' .
-                 '<strong>Fecha de inicio del curso:</strong> ' . $fechainicio . '<br>' .
-                 '<strong>Fecha de validación configurada:</strong> ' . $fechavalidacion . '</div>';
 
         $this->content = (object)[
             'footer' => '',
-            'text' => '<h4>Valida Cursos</h4>' .
-                      '<p>' . $icono . '</p>',
+            'text' => $html,
         ];
         return $this->content;
     }
