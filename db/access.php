@@ -15,17 +15,33 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * Version information for Validacursos
+ * Capability definitions for Validacursos
+ *
+ * Documentation: {@link https://moodledev.io/docs/apis/subsystems/access}
  *
  * @package    block_validacursos
+ * @category   access
  * @copyright  2025 Sergio Comerón <info@sergiocomeron.com>
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 
 defined('MOODLE_INTERNAL') || die();
 
-$plugin->component    = 'block_validacursos';
-$plugin->release      = '1.0';
-$plugin->version      = 2025073000;
-$plugin->requires     = 2022100700;
-$plugin->maturity     = MATURITY_STABLE;
+$capabilities = [
+    'block/validacursos:addinstance' => [
+        'captype' => 'write',
+        'contextlevel' => CONTEXT_COURSE, // Solo en el contexto de un curso.
+        'archetypes' => [
+            'manager' => CAP_ALLOW,
+            'editingteacher' => CAP_ALLOW,
+        ],
+    ],
+    'block/validacursos:myaddinstance' => array(
+        'captype' => 'write',
+        'contextlevel' => CONTEXT_SYSTEM,
+        'archetypes' => [
+            'admin' => CAP_ALLOW
+        ],
+            'clonepermissionsfrom' => 'moodle/my:manageblocks'
+        )
+];

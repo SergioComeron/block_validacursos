@@ -46,7 +46,7 @@ class block_validacursos extends block_base {
 
         // Formatear la fecha de inicio del curso para el usuario.
         if (!empty($COURSE->startdate)) {
-            $fechainicio = userdate($COURSE->startdate, get_string('strftimedate', 'langconfig'));
+            $fechainicio = userdate($COURSE->startdate, get_string('strftimedatetime', 'langconfig'));
         } else {
             $fechainicio = get_string('notavailable', 'moodle');
         }
@@ -54,7 +54,7 @@ class block_validacursos extends block_base {
         // Obtener y formatear la fecha de validación configurada.
         $config = get_config('block_validacursos');
         if (!empty($config->fechainiciovalidacion)) {
-            $fechavalidacion = userdate($config->fechainiciovalidacion, get_string('strftimedate', 'langconfig'));
+            $fechavalidacion = userdate($config->fechainiciovalidacion, get_string('strftimedatetime', 'langconfig'));
         } else {
             $fechavalidacion = get_string('notavailable', 'moodle');
         }
