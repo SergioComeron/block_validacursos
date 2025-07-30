@@ -45,25 +45,36 @@ class block_validacursos extends block_base {
         }
 
         // Formatear la fecha de inicio del curso para el usuario.
-        if (!empty($COURSE->startdate)) {
-            $fechainicio = userdate($COURSE->startdate, get_string('strftimedatetime', 'langconfig'));
-        } else {
-            $fechainicio = get_string('notavailable', 'moodle');
-        }
+        $fechainicio = !empty($COURSE->startdate)
+            ? userdate($COURSE->startdate, get_string('strftimedatetime', 'langconfig'))
+            : get_string('notavailable', 'moodle');
 
         // Obtener y formatear la fecha de validación configurada.
         $config = get_config('block_validacursos');
-        if (!empty($config->fechainiciovalidacion)) {
-            $fechavalidacion = userdate($config->fechainiciovalidacion, get_string('strftimedatetime', 'langconfig'));
-        } else {
-            $fechavalidacion = get_string('notavailable', 'moodle');
+        $fechavalidacion = !empty($config->fechainiciovalidacion)
+            ? userdate($config->fechainiciovalidacion, get_string('strftimedatetime', 'langconfig'))
+            : get_string('notavailable', 'moodle');
+
+        // Validar fechas.
+        $validada = false;
+        if (!empty($COURSE->startdate) && !empty($config->fechainiciovalidacion)) {
+            $validada = $this->fechas_son_iguales($COURSE->startdate, $config->fechainiciovalidacion);
         }
+
+        // Punto verde o rojo con desplegable.
+        $iconoid = uniqid('validacursos_icono_');
+        $icono = '<span style="cursor:pointer;color:' . ($validada ? 'green' : 'red') . ';font-size:1.5em;" onclick="var d=document.getElementById(\'' . $iconoid . '\');d.style.display=d.style.display==\'none\'?\'block\':\'none\';">&#9679;</span> ' .
+                 '<span style="cursor:pointer;" onclick="var d=document.getElementById(\'' . $iconoid . '\');d.style.display=d.style.display==\'none\'?\'block\':\'none\';">' .
+                 ($validada ? 'Fecha Inicio validada' : 'Fecha Inicio NO validada') .
+                 '</span>' .
+                 '<div id="' . $iconoid . '" style="display:none;margin-top:8px;padding:8px;border:1px solid #ccc;background:#f9f9f9;">' .
+                 '<strong>Fecha de inicio del curso:</strong> ' . $fechainicio . '<br>' .
+                 '<strong>Fecha de validación configurada:</strong> ' . $fechavalidacion . '</div>';
 
         $this->content = (object)[
             'footer' => '',
             'text' => '<h4>Valida Cursos</h4>' .
-                      '<p><strong>Fecha de inicio del curso:</strong> ' . $fechainicio . '</p>' .
-                      '<p><strong>Fecha de validación configurada:</strong> ' . $fechavalidacion . '</p>',
+                      '<p>' . $icono . '</p>',
         ];
         return $this->content;
     }
@@ -88,5 +99,16 @@ class block_validacursos extends block_base {
             'site' => false,       // No disponible en la página principal.
             'my' => false,         // No disponible en "Mi área".
         ];
+    }
+
+    /**
+     * Valida si las dos fechas son iguales (timestamp).
+     *
+     * @param int $fecha1
+     * @param int $fecha2
+     * @return bool
+     */
+    private function fechas_son_iguales($fecha1, $fecha2) {
+        return (int)$fecha1 === (int)$fecha2;
     }
 }
