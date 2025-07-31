@@ -127,7 +127,13 @@ class block_validacursos extends block_base {
      * @return stdClass
      */
     public function get_content() {
-        global $COURSE;
+        global $COURSE, $PAGE, $DB;
+
+        // Solo mostrar el bloque si el usuario tiene la capacidad block/validacursos:view
+        $context = context_course::instance($COURSE->id);
+        if (!has_capability('block/validacursos:view', $context)) {
+            return null;
+        }
 
         if ($this->content !== null) {
             return $this->content;
@@ -135,6 +141,21 @@ class block_validacursos extends block_base {
 
         $config = get_config('block_validacursos');
         $validaciones = $this->obtener_validaciones($COURSE, $config);
+
+        // Procesar cambio de fecha si se solicita y el usuario tiene permisos
+        if (optional_param('changestartdate', 0, PARAM_INT)) {
+            require_capability('moodle/course:update', $context);
+            if (!empty($config->fechainiciovalidacion)) {
+                // Recarga el objeto curso para asegurar el ID
+                $courseid = $COURSE->id ?? optional_param('id', 0, PARAM_INT);
+                if ($courseid) {
+                    $DB->set_field('course', 'startdate', $config->fechainiciovalidacion, ['id' => $courseid]);
+                    redirect(new moodle_url('/course/view.php', ['id' => $courseid]), 'Fecha de inicio actualizada', 2);
+                } else {
+                    print_error('missingcourseid', 'block_validacursos');
+                }
+            }
+        }
 
         $html = '<h4>Valida Cursos</h4>';
         foreach ($validaciones as $i => $val) {
@@ -145,7 +166,13 @@ class block_validacursos extends block_base {
             $html .= '<span style="cursor:pointer;vertical-align:middle;" onclick="var d=document.getElementById(\'' . $iconoid . '\');d.style.display=d.style.display==\'none\'?\'block\':\'none\';">' . $val['nombre'] . '</span>';
             $html .= '<div id="' . $iconoid . '" style="display:none;margin-top:4px;padding:6px;border:1px solid #ccc;background:#f9f9f9;font-size:0.95em;">';
             foreach ($val['detalle'] as $label => $valor) {
-                $html .= '<strong>' . $label . ':</strong> ' . $valor . '<br>';
+                $html .= '<strong>' . $label . ':</strong> ' . $valor;
+                // Mostrar botón solo si es la validación de fecha, no está validada y es el campo "Curso"
+                if ($val['nombre'] === 'Fecha de inicio' && !$val['estado'] && $label === 'Curso' && has_capability('moodle/course:update', $context)) {
+                    // Icono de "corregir": lápiz ✏️
+                    $html .= ' <button title="Corregir la fecha por la configurada" style="border:none;background:none;padding:0;margin-left:6px;cursor:pointer;" onclick="if(confirm(\'¿Quieres corregir la fecha de inicio del curso por la configurada?\')){window.location.href=\'?changestartdate=1&id=' . $COURSE->id . '\';}"><span style="font-size:1.1em;color:#007bff;">&#9998;</span></button>';
+                }
+                $html .= '<br>';
             }
             $html .= '</div></div>';
         }
