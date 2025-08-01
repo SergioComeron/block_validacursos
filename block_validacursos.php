@@ -122,6 +122,124 @@ class block_validacursos extends block_base {
     }
 
     /**
+     * Crea un foro de tutorías de la asignatura en la sección 0 del curso si no existe.
+     *
+     * @param object $course
+     * @return bool|int Devuelve el id del foro creado o false si falla.
+     */
+    private function crear_foro_tutorias($course) {
+        global $DB, $USER;
+
+        // Obtener la sección 0
+        $section0 = $DB->get_record('course_sections', ['course' => $course->id, 'section' => 0], '*', MUST_EXIST);
+
+        // Crear el foro
+        $forum = new stdClass();
+        $forum->course = $course->id;
+        $forum->type = 'general';
+        $forum->name = 'Foro de tutorías de la asignatura';
+        $forum->intro = 'Foro para tutorías de la asignatura.';
+        $forum->introformat = FORMAT_HTML;
+        $forum->assessed = 0;
+        $forum->forcesubscribe = 1;
+        $forum->trackingtype = 1;
+        $forum->timemodified = time();
+        $forum->timecreated = time();
+
+        $forumid = $DB->insert_record('forum', $forum);
+
+        // Obtener el id del módulo forum
+        $forum_module_id = $DB->get_field('modules', 'id', ['name' => 'forum'], MUST_EXIST);
+
+        // Crear el course_module
+        $cm = new stdClass();
+        $cm->course = $course->id;
+        $cm->module = $forum_module_id;
+        $cm->instance = $forumid;
+        $cm->section = $section0->id;
+        $cm->added = time();
+        $cm->visible = 1;
+        $cm->visibleold = 1;
+        $cm->groupmode = 0;
+        $cm->groupingid = 0;
+        $cm->completion = 0;
+        $cm->completiongradeitemnumber = null;
+        $cm->completionview = 0;
+        $cm->completionexpected = 0;
+        $cm->showdescription = 0;
+        $cmid = $DB->insert_record('course_modules', $cm);
+
+        // Añadir el módulo a la sección 0
+        $sequence = trim($section0->sequence);
+        $sequence = $sequence ? $sequence . ',' . $cmid : $cmid;
+        $DB->set_field('course_sections', 'sequence', $sequence, ['id' => $section0->id]);
+
+        // Actualizar el campo modinfo del curso
+        rebuild_course_cache($course->id, true);
+
+        return $forumid;
+    }
+
+    /**
+     * Crea un foro de comunicación entre estudiantes en la sección 0 del curso si no existe.
+     *
+     * @param object $course
+     * @return bool|int Devuelve el id del foro creado o false si falla.
+     */
+    private function crear_foro_estudiantes($course) {
+        global $DB, $USER;
+
+        // Obtener la sección 0
+        $section0 = $DB->get_record('course_sections', ['course' => $course->id, 'section' => 0], '*', MUST_EXIST);
+
+        // Crear el foro
+        $forum = new stdClass();
+        $forum->course = $course->id;
+        $forum->type = 'general';
+        $forum->name = 'Foro de comunicación entre estudiantes';
+        $forum->intro = 'Foro para la comunicación entre estudiantes.';
+        $forum->introformat = FORMAT_HTML;
+        $forum->assessed = 0;
+        $forum->forcesubscribe = 1;
+        $forum->trackingtype = 1;
+        $forum->timemodified = time();
+        $forum->timecreated = time();
+
+        $forumid = $DB->insert_record('forum', $forum);
+
+        // Obtener el id del módulo forum
+        $forum_module_id = $DB->get_field('modules', 'id', ['name' => 'forum'], MUST_EXIST);
+
+        // Crear el course_module
+        $cm = new stdClass();
+        $cm->course = $course->id;
+        $cm->module = $forum_module_id;
+        $cm->instance = $forumid;
+        $cm->section = $section0->id;
+        $cm->added = time();
+        $cm->visible = 1;
+        $cm->visibleold = 1;
+        $cm->groupmode = 0;
+        $cm->groupingid = 0;
+        $cm->completion = 0;
+        $cm->completiongradeitemnumber = null;
+        $cm->completionview = 0;
+        $cm->completionexpected = 0;
+        $cm->showdescription = 0;
+        $cmid = $DB->insert_record('course_modules', $cm);
+
+        // Añadir el módulo a la sección 0
+        $sequence = trim($section0->sequence);
+        $sequence = $sequence ? $sequence . ',' . $cmid : $cmid;
+        $DB->set_field('course_sections', 'sequence', $sequence, ['id' => $section0->id]);
+
+        // Actualizar el campo modinfo del curso
+        rebuild_course_cache($course->id, true);
+
+        return $forumid;
+    }
+
+    /**
      * Get content
      *
      * @return stdClass
@@ -157,6 +275,20 @@ class block_validacursos extends block_base {
             }
         }
 
+        // Procesar creación de foro de tutorías si se solicita y el usuario tiene permisos
+        if (optional_param('createforotutorias', 0, PARAM_INT)) {
+            require_capability('moodle/course:manageactivities', $context);
+            $this->crear_foro_tutorias($COURSE);
+            redirect(new moodle_url('/course/view.php', ['id' => $COURSE->id]), 'Foro de tutorías creado', 2);
+        }
+
+        // Procesar creación de foro de comunicación entre estudiantes si se solicita y el usuario tiene permisos
+        if (optional_param('createforoestudiantes', 0, PARAM_INT)) {
+            require_capability('moodle/course:manageactivities', $context);
+            $this->crear_foro_estudiantes($COURSE);
+            redirect(new moodle_url('/course/view.php', ['id' => $COURSE->id]), 'Foro de comunicación entre estudiantes creado', 2);
+        }
+
         $html = '<h4>Valida Cursos</h4>';
         foreach ($validaciones as $i => $val) {
             $iconoid = uniqid('validacursos_icono_' . $i . '_');
@@ -171,6 +303,16 @@ class block_validacursos extends block_base {
                 if ($val['nombre'] === 'Fecha de inicio' && !$val['estado'] && $label === 'Curso' && has_capability('moodle/course:update', $context)) {
                     // Icono de "corregir": lápiz ✏️
                     $html .= ' <button title="Corregir la fecha por la configurada" style="border:none;background:none;padding:0;margin-left:6px;cursor:pointer;" onclick="if(confirm(\'¿Quieres corregir la fecha de inicio del curso por la configurada?\')){window.location.href=\'?changestartdate=1&id=' . $COURSE->id . '\';}"><span style="font-size:1.1em;color:#007bff;">&#9998;</span></button>';
+                }
+                // Mostrar botón solo si es la validación del foro de tutorías, no está validada y es el campo "Estado"
+                if ($val['nombre'] === 'Foro de tutorías de la asignatura' && !$val['estado'] && $label === 'Estado' && has_capability('moodle/course:manageactivities', $context)) {
+                    // Icono de "añadir": ➕
+                    $html .= ' <button title="Crear foro de tutorías en la sección 0" style="border:none;background:none;padding:0;margin-left:6px;cursor:pointer;" onclick="if(confirm(\'¿Quieres crear el foro de tutorías de la asignatura en la sección 0?\')){window.location.href=\'?createforotutorias=1&id=' . $COURSE->id . '\';}"><span style="font-size:1.1em;color:#28a745;">&#10133;</span></button>';
+                }
+                // Mostrar botón solo si es la validación del foro de comunicación entre estudiantes, no está validada y es el campo "Estado"
+                if ($val['nombre'] === 'Foro de comunicación entre estudiantes' && !$val['estado'] && $label === 'Estado' && has_capability('moodle/course:manageactivities', $context)) {
+                    // Icono de "añadir": ➕
+                    $html .= ' <button title="Crear foro de comunicación entre estudiantes en la sección 0" style="border:none;background:none;padding:0;margin-left:6px;cursor:pointer;" onclick="if(confirm(\'¿Quieres crear el foro de comunicación entre estudiantes en la sección 0?\')){window.location.href=\'?createforoestudiantes=1&id=' . $COURSE->id . '\';}"><span style="font-size:1.1em;color:#28a745;">&#10133;</span></button>';
                 }
                 $html .= '<br>';
             }
