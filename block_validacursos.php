@@ -43,7 +43,7 @@ class block_validacursos extends block_base {
         global $DB;
         $validaciones = [];
 
-        // Validación fecha.
+        // Validación fecha de inicio.
         $validafecha = !empty($course->startdate) && !empty($config->fechainiciovalidacion)
             && $this->fechas_son_iguales($course->startdate, $config->fechainiciovalidacion);
 
@@ -54,6 +54,20 @@ class block_validacursos extends block_base {
             'detalle' => [
                 'Curso' => !empty($course->startdate) ? userdate($course->startdate) : get_string('notavailable', 'moodle'),
                 'Configuración' => !empty($config->fechainiciovalidacion) ? userdate($config->fechainiciovalidacion) : get_string('notavailable', 'moodle')
+            ]
+        ];
+
+        // Validación fecha de fin.
+        $validafechafin = !empty($course->enddate) && !empty($config->fechafinvalidacion)
+            && $this->fechas_son_iguales($course->enddate, $config->fechafinvalidacion);
+
+        $validaciones[] = [
+            'nombre' => 'Fecha de fin',
+            'estado' => $validafechafin,
+            'mensaje' => $validafechafin ? 'Fecha Fin validada' : 'Fecha Fin NO validada',
+            'detalle' => [
+                'Curso' => !empty($course->enddate) ? userdate($course->enddate) : get_string('notavailable', 'moodle'),
+                'Configuración' => !empty($config->fechafinvalidacion) ? userdate($config->fechafinvalidacion) : get_string('notavailable', 'moodle')
             ]
         ];
 
@@ -117,6 +131,54 @@ class block_validacursos extends block_base {
                 ]
             ];
         }
+
+        // Validación de la existencia de la URL "Guia Docente" en el bloque cero (sección 0)
+        $guiadocente_ok = false;
+        $guiaurl = '';
+        $guiaurlok = false;
+        // Obtener todos los módulos de la sección 0
+        $section0mods = [];
+        if ($section0id) {
+            $section0mods = $DB->get_records('course_modules', ['course' => $course->id, 'section' => $section0id]);
+        }
+        if ($section0mods) {
+            // Obtener todos los recursos url del curso
+            $urls = $DB->get_records('url', ['course' => $course->id]);
+            foreach ($section0mods as $cm) {
+                if ($cm->module == $DB->get_field('modules', 'id', ['name' => 'url'])) {
+                    if (isset($urls[$cm->instance])) {
+                        $urlobj = $urls[$cm->instance];
+                        if (trim($urlobj->name) === 'Guia Docente') {
+                            $guiadocente_ok = true;
+                            $guiaurl = (new moodle_url('/mod/url/view.php', ['id' => $cm->id]))->out();
+                            // Comprobar que la URL empieza por https://www.udima.es
+                            if (strpos(trim($urlobj->externalurl), 'https://www.udima.es') === 0) {
+                                $guiaurlok = true;
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        $validaciones[] = [
+            'nombre' => 'Guía Docente en bloque cero',
+            'estado' => $guiadocente_ok && $guiaurlok,
+            'mensaje' => ($guiadocente_ok && $guiaurlok) ? 'Guía Docente encontrada y URL válida' :
+                ($guiadocente_ok ? 'Guía Docente encontrada pero URL NO válida' : 'Guía Docente NO encontrada'),
+            'detalle' => [
+                'Nombre buscado' => 'Guia Docente',
+                'Estado' => $guiadocente_ok
+                    ? ('Encontrada en la sección 0 <a href="' . $guiaurl . '" target="_blank" style="margin-left:8px;">Ver</a>')
+                    : 'No encontrada en la sección 0',
+                'URL' => $guiadocente_ok
+                    ? (isset($urlobj->externalurl) ? s($urlobj->externalurl) : '-')
+                    : '-',
+                'Validación URL' => $guiadocente_ok
+                    ? ($guiaurlok ? 'La URL es válida' : 'La URL NO es válida (debe empezar por https://www.udima.es)')
+                    : '-'
+            ]
+        ];
 
         return $validaciones;
     }
@@ -275,6 +337,20 @@ class block_validacursos extends block_base {
             }
         }
 
+        // Procesar cambio de fecha de fin si se solicita y el usuario tiene permisos
+        if (optional_param('changeenddate', 0, PARAM_INT)) {
+            require_capability('moodle/course:update', $context);
+            if (!empty($config->fechafinvalidacion)) {
+                $courseid = $COURSE->id ?? optional_param('id', 0, PARAM_INT);
+                if ($courseid) {
+                    $DB->set_field('course', 'enddate', $config->fechafinvalidacion, ['id' => $courseid]);
+                    redirect(new moodle_url('/course/view.php', ['id' => $courseid]), 'Fecha de fin actualizada', 2);
+                } else {
+                    print_error('missingcourseid', 'block_validacursos');
+                }
+            }
+        }
+
         // Procesar creación de foro de tutorías si se solicita y el usuario tiene permisos
         if (optional_param('createforotutorias', 0, PARAM_INT)) {
             require_capability('moodle/course:manageactivities', $context);
@@ -303,6 +379,10 @@ class block_validacursos extends block_base {
                 if ($val['nombre'] === 'Fecha de inicio' && !$val['estado'] && $label === 'Curso' && has_capability('moodle/course:update', $context)) {
                     // Icono de "corregir": lápiz ✏️
                     $html .= ' <button title="Corregir la fecha por la configurada" style="border:none;background:none;padding:0;margin-left:6px;cursor:pointer;" onclick="if(confirm(\'¿Quieres corregir la fecha de inicio del curso por la configurada?\')){window.location.href=\'?changestartdate=1&id=' . $COURSE->id . '\';}"><span style="font-size:1.1em;color:#007bff;">&#9998;</span></button>';
+                }
+                // Mostrar botón solo si es la validación de fecha de fin, no está validada y es el campo "Curso"
+                if ($val['nombre'] === 'Fecha de fin' && !$val['estado'] && $label === 'Curso' && has_capability('moodle/course:update', $context)) {
+                    $html .= ' <button title="Corregir la fecha por la configurada" style="border:none;background:none;padding:0;margin-left:6px;cursor:pointer;" onclick="if(confirm(\'¿Quieres corregir la fecha de fin del curso por la configurada?\')){window.location.href=\'?changeenddate=1&id=' . $COURSE->id . '\';}"><span style="font-size:1.1em;color:#007bff;">&#9998;</span></button>';
                 }
                 // Mostrar botón solo si es la validación del foro de tutorías, no está validada y es el campo "Estado"
                 if ($val['nombre'] === 'Foro de tutorías de la asignatura' && !$val['estado'] && $label === 'Estado' && has_capability('moodle/course:manageactivities', $context)) {

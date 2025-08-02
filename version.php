@@ -26,6 +26,6 @@ defined('MOODLE_INTERNAL') || die();
 
 $plugin->component    = 'block_validacursos';
 $plugin->release      = '1.0';
-$plugin->version      = 2025073100;
+$plugin->version      = 2025080200;
 $plugin->requires     = 2022100700;
 $plugin->maturity     = MATURITY_STABLE;

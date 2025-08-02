@@ -27,6 +27,8 @@ defined('MOODLE_INTERNAL') || die();
 
 $string['fechainiciovalidacion'] = 'Start date';
 $string['fechainiciovalidacion_desc'] = 'Start date that courses must have to be validated';
+$string['fechafinvalidacion'] = 'End date';
+$string['fechafinvalidacion_desc'] = 'End date that courses must have to be validated';
 $string['missingcourseid'] = 'Missingcourseid';
 $string['pluginname'] = 'Validacursos';
 $string['validacursos:addinstance'] = 'Add a new Validacursos block';

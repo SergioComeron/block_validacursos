@@ -31,6 +31,12 @@ if ($hassiteconfig) { // Solo mostrar la configuración a los administradores.
         get_string('fechainiciovalidacion_desc', 'block_validacursos'), // Descripción (cadena de idioma)  
         time()  // Valor por defecto (timestamp actual, por ejemplo)  
     ));
+    $settings->add(new admin_setting_configdate(  
+        'block_validacursos/fechafinvalidacion',               // Nombre del ajuste con prefijo del bloque  
+        get_string('fechafinvalidacion', 'block_validacursos'), // Nombre visible (cadena de idioma)  
+        get_string('fechafinvalidacion_desc', 'block_validacursos'), // Descripción (cadena de idioma)  
+        time()  // Valor por defecto (timestamp actual, por ejemplo)  
+    ));
 }
 
 
