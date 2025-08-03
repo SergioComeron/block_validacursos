@@ -242,6 +242,61 @@ class block_validacursos extends block_base {
             'detalle' => $detalle_label
         ];
 
+        // Validación de label con tabla y texto "CRONOGRAMA DE ACTIVIDADES CALIFICABLES" en bloque cero
+        $label_cronograma_ok = false;
+        $label_cronograma_faltas = [];
+        $label_cronograma_texto = 'CRONOGRAMA DE ACTIVIDADES CALIFICABLES';
+
+        if ($section0id) {
+            // Reutilizamos $section0mods y $labels si ya están definidos, si no, los obtenemos
+            if (!isset($section0mods) || !$section0mods) {
+                $section0mods = $DB->get_records('course_modules', [
+                    'course' => $course->id,
+                    'section' => $section0id,
+                    'module' => $label_module_id
+                ]);
+            }
+            if (!isset($labels) || !$labels) {
+                if ($section0mods) {
+                    $label_instances = array_map(function($cm) { return $cm->instance; }, $section0mods);
+                    list($in_sql, $params) = $DB->get_in_or_equal($label_instances);
+                    $labels = $DB->get_records_select('label', "id $in_sql", $params);
+                } else {
+                    $labels = [];
+                }
+            }
+
+            foreach ($labels as $label) {
+                $intro = $label->intro;
+                // Comprobar que contiene una tabla y el texto buscado
+                $tiene_tabla = stripos($intro, '<table') !== false;
+                $tiene_texto = stripos(strip_tags($intro), $label_cronograma_texto) !== false;
+                // Evitar que sea el mismo label que el de tutoría (por ejemplo, comprobando que no contiene todas las claves de tutoría)
+                $es_label_tutoria = true;
+                foreach ($claves as $clave) {
+                    if (mb_stripos(strip_tags($intro), $clave) === false) {
+                        $es_label_tutoria = false;
+                        break;
+                    }
+                }
+                if ($tiene_tabla && $tiene_texto && !$es_label_tutoria) {
+                    $label_cronograma_ok = true;
+                    break;
+                }
+            }
+        }
+
+        $validaciones[] = [
+            'nombre' => 'Cronograma de actividades calificables en bloque cero',
+            'estado' => $label_cronograma_ok,
+            'mensaje' => $label_cronograma_ok
+                ? 'Cronograma encontrado'
+                : 'No se ha encontrado el cronograma en la sección 0',
+            'detalle' => [
+                'Debe existir un recurso de tipo "Text and media area" (label) en la sección 0 que contenga una tabla y el texto: ' . $label_cronograma_texto
+            ]
+        ];
+
         return $validaciones;
     }
 
