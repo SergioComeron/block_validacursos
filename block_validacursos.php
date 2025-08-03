@@ -180,6 +180,68 @@ class block_validacursos extends block_base {
             ]
         ];
 
+        // Validación de datos de tutoría en bloque cero (label con claves mínimas)
+        $label_module_id = $DB->get_field('modules', 'id', ['name' => 'label'], MUST_EXIST);
+        $label_encontrado = false;
+        $claves = [
+            'Profesor:',
+            'Correo electrónico:',
+            'Teléfono',
+            'Extensión',
+            'Horario de tutorías'
+        ];
+        $faltan = $claves;
+
+        // Obtener todos los course_modules de sección 0 que sean label
+        if ($section0id) {
+            $section0mods = $DB->get_records('course_modules', [
+                'course' => $course->id,
+                'section' => $section0id,
+                'module' => $label_module_id
+            ]);
+            if ($section0mods) {
+                $label_instances = array_map(function($cm) { return $cm->instance; }, $section0mods);
+                list($in_sql, $params) = $DB->get_in_or_equal($label_instances);
+                $labels = $DB->get_records_select('label', "id $in_sql", $params);
+                foreach ($labels as $label) {
+                    $intro = strip_tags($label->intro);
+                    $faltan_actual = [];
+                    foreach ($claves as $clave) {
+                        if (mb_stripos($intro, $clave) === false) {
+                            $faltan_actual[] = $clave;
+                        }
+                    }
+                    if (empty($faltan_actual)) {
+                        $label_encontrado = true;
+                        $faltan = [];
+                        break;
+                    } else {
+                        // Si hay varias labels, nos quedamos con la que menos le falte
+                        if (count($faltan_actual) < count($faltan)) {
+                            $faltan = $faltan_actual;
+                        }
+                    }
+                }
+            }
+        }
+
+        $detalle_label = [
+            'Claves buscadas' => implode(', ', $claves),
+            'Estado' => $label_encontrado ? 'Encontrado' : 'No encontrado'
+        ];
+        if (!$label_encontrado && count($faltan) > 0) {
+            $detalle_label['Faltan'] = implode(', ', $faltan);
+        }
+
+        $validaciones[] = [
+            'nombre' => 'Datos de tutoría en bloque cero',
+            'estado' => $label_encontrado,
+            'mensaje' => $label_encontrado
+                ? 'Datos de tutoría encontrados'
+                : 'No se han encontrado los datos de tutoría requeridos',
+            'detalle' => $detalle_label
+        ];
+
         return $validaciones;
     }
 
