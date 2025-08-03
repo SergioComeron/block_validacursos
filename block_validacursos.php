@@ -148,7 +148,7 @@ class block_validacursos extends block_base {
                 if ($cm->module == $DB->get_field('modules', 'id', ['name' => 'url'])) {
                     if (isset($urls[$cm->instance])) {
                         $urlobj = $urls[$cm->instance];
-                        if (trim($urlobj->name) === 'Guia Docente') {
+                        if (trim($urlobj->name) === 'Guía Docente') {
                             $guiadocente_ok = true;
                             $guiaurl = (new moodle_url('/mod/url/view.php', ['id' => $cm->id]))->out();
                             // Comprobar que la URL empieza por https://www.udima.es
