@@ -244,42 +244,123 @@ class block_validacursos extends block_base {
 
         // Validación de label con tabla y texto "CRONOGRAMA DE ACTIVIDADES CALIFICABLES" en bloque cero
         $label_cronograma_ok = false;
-        $label_cronograma_faltas = [];
+        $cronograma_errores = [];
         $label_cronograma_texto = 'CRONOGRAMA DE ACTIVIDADES CALIFICABLES';
 
-        if ($section0id) {
-            // Reutilizamos $section0mods y $labels si ya están definidos, si no, los obtenemos
-            if (!isset($section0mods) || !$section0mods) {
-                $section0mods = $DB->get_records('course_modules', [
-                    'course' => $course->id,
-                    'section' => $section0id,
-                    'module' => $label_module_id
-                ]);
-            }
-            if (!isset($labels) || !$labels) {
-                if ($section0mods) {
-                    $label_instances = array_map(function($cm) { return $cm->instance; }, $section0mods);
-                    list($in_sql, $params) = $DB->get_in_or_equal($label_instances);
-                    $labels = $DB->get_records_select('label', "id $in_sql", $params);
-                } else {
-                    $labels = [];
-                }
-            }
-
+        if ($section0id && !empty($labels)) {
             foreach ($labels as $label) {
                 $intro = $label->intro;
-                // Comprobar que contiene una tabla y el texto buscado
-                $tiene_tabla = stripos($intro, '<table') !== false;
-                $tiene_texto = stripos(strip_tags($intro), $label_cronograma_texto) !== false;
-                // Evitar que sea el mismo label que el de tutoría (por ejemplo, comprobando que no contiene todas las claves de tutoría)
-                $es_label_tutoria = true;
-                foreach ($claves as $clave) {
-                    if (mb_stripos(strip_tags($intro), $clave) === false) {
-                        $es_label_tutoria = false;
-                        break;
+                // Solo procesar si contiene el texto clave
+                if (stripos(strip_tags($intro), $label_cronograma_texto) === false) {
+                    continue;
+                }
+                // Parsear HTML
+                libxml_use_internal_errors(true);
+                $dom = new DOMDocument();
+                if (!$dom->loadHTML('<?xml encoding="utf-8" ?>' . $intro)) {
+                    $cronograma_errores[] = 'No se pudo analizar el HTML del label.';
+                    continue;
+                }
+                $tables = $dom->getElementsByTagName('table');
+                if ($tables->length == 0) {
+                    $cronograma_errores[] = 'No se encontró ninguna tabla en el label.';
+                    continue;
+                }
+                $tabla = $tables->item(0);
+
+                // Validar número de columnas (en la primera fila de datos)
+                $rows = $tabla->getElementsByTagName('tr');
+                if ($rows->length < 3) {
+                    $cronograma_errores[] = 'La tabla tiene menos de 3 filas.';
+                    continue;
+                }
+
+                // Validar cabecera principal
+                $thprincipal = $rows->item(0)->getElementsByTagName('th')->item(0);
+                if (!$thprincipal) {
+                    $cronograma_errores[] = 'No se encontró la cabecera principal.';
+                    continue;
+                }
+                $colspan = $thprincipal->getAttribute('colspan');
+                if ($colspan != 5) {
+                    $cronograma_errores[] = 'La cabecera principal no tiene colspan=5.';
+                }
+                $style = $thprincipal->getAttribute('style');
+                if (stripos($style, 'background-color: #004d35') === false) {
+                    $cronograma_errores[] = 'La cabecera principal no tiene el color de fondo correcto.';
+                }
+                if (stripos($style, 'border: 3px double') === false) {
+                    $cronograma_errores[] = 'La cabecera principal no tiene el borde doble de 3px.';
+                }
+                $text = strtoupper(trim($thprincipal->textContent));
+                if (stripos($text, $label_cronograma_texto) === false) {
+                    $cronograma_errores[] = 'El texto de la cabecera principal no es correcto.';
+                }
+
+                // Validar número de columnas en la tercera fila (cabecera secundaria)
+                $cabecera2 = $rows->item(2);
+                if ($cabecera2->childNodes->length < 5) {
+                    $cronograma_errores[] = 'La cabecera secundaria no tiene 5 columnas.';
+                } else {
+                    // Validar que contiene los textos "ACTIVIDAD" y "FECHA DE ENTREGA"
+                    $cabecera_textos = [];
+                    foreach ($cabecera2->childNodes as $cell) {
+                        if ($cell instanceof DOMElement && in_array($cell->nodeName, ['th', 'td'])) {
+                            $cabecera_textos[] = strtoupper(trim($cell->textContent));
+                        }
+                    }
+                    $tiene_actividad = false;
+                    $tiene_fecha = false;
+                    foreach ($cabecera_textos as $texto) {
+                        if (strpos($texto, 'ACTIVIDAD') !== false) {
+                            $tiene_actividad = true;
+                        }
+                        if (strpos($texto, 'FECHA DE ENTREGA') !== false) {
+                            $tiene_fecha = true;
+                        }
+                    }
+                    if (!$tiene_actividad) {
+                        $cronograma_errores[] = 'La cabecera secundaria no contiene el texto "ACTIVIDAD".';
+                    }
+                    if (!$tiene_fecha) {
+                        $cronograma_errores[] = 'La cabecera secundaria no contiene el texto "FECHA DE ENTREGA".';
                     }
                 }
-                if ($tiene_tabla && $tiene_texto && !$es_label_tutoria) {
+
+                // Validar que las celdas tengan color y borde
+                $errores_celdas = 0;
+                for ($i = 3; $i < $rows->length; $i++) { // Empieza en la fila 3 (índice 2) para saltar cabeceras
+                    $cells = $rows->item($i)->childNodes;
+                    $colidx = 0;
+                    foreach ($cells as $cell) {
+                        if ($cell instanceof DOMElement && $cell->nodeName == 'td') {
+                            $cellstyle = $cell->getAttribute('style');
+                            // Solo comprobar el borde en las columnas 0,1,3,4 (no la central)
+                            if (in_array($colidx, [0,1,3,4])) {
+                                if (stripos($cellstyle, 'border: 1px dashed rgb(0, 77, 53)') === false) {
+                                    $errores_celdas++;
+                                }
+                            }
+                            // En la columna central (2), permitir border:none o vacío
+                            if ($colidx == 2) {
+                                if (
+                                    !empty($cellstyle) &&
+                                    stripos($cellstyle, 'border: none') === false &&
+                                    stripos($cellstyle, 'border-width: 0px') === false
+                                ) {
+                                    $errores_celdas++;
+                                }
+                            }
+                            $colidx++;
+                        }
+                    }
+                }
+                if ($errores_celdas > 0) {
+                    $cronograma_errores[] = "Algunas celdas no tienen el borde o formato esperado.";
+                }
+
+                // Si no hay errores, validación OK
+                if (empty($cronograma_errores)) {
                     $label_cronograma_ok = true;
                     break;
                 }
@@ -290,10 +371,11 @@ class block_validacursos extends block_base {
             'nombre' => 'Cronograma de actividades calificables en bloque cero',
             'estado' => $label_cronograma_ok,
             'mensaje' => $label_cronograma_ok
-                ? 'Cronograma encontrado'
-                : 'No se ha encontrado el cronograma en la sección 0',
+                ? 'Cronograma con formato correcto encontrado'
+                : 'No se ha encontrado el cronograma con el formato requerido',
             'detalle' => [
-                'Debe existir un recurso de tipo "Text and media area" (label) en la sección 0 que contenga una tabla y el texto: ' . $label_cronograma_texto
+                'Requisitos' => 'Tabla con 5 columnas, cabecera principal con color #004d35 y borde doble, texto "' . $label_cronograma_texto . '"',
+                'Errores' => empty($cronograma_errores) ? '-' : implode('<br>', $cronograma_errores)
             ]
         ];
 
