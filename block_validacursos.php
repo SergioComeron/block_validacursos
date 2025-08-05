@@ -297,6 +297,54 @@ class block_validacursos extends block_base {
             ]
         ];
 
+        // Validación de categorías del calificador.
+        $categorias_requeridas = [
+            'Actividades de aprendizaje',
+            'Controles',
+            'Actividades de evaluación continua',
+            'Examen final',
+            'Actividades no evaluables'
+        ];
+        $faltan_categorias = $categorias_requeridas;
+        $peso_actividades_no_evaluables = null;
+
+        // Obtener todas las categorías del calificador del curso
+        $grade_categories = $DB->get_records('grade_categories', ['courseid' => $course->id]);
+        foreach ($grade_categories as $cat) {
+            $nombre = trim($cat->fullname);
+            $idx = array_search($nombre, $faltan_categorias);
+            if ($idx !== false) {
+                unset($faltan_categorias[$idx]);
+            }
+            // Guardar el peso de "Actividades no evaluables"
+            if ($nombre === 'Actividades no evaluables') {
+                $peso_actividades_no_evaluables = $cat->aggregationcoef;
+            }
+        }
+
+        $detalle_categorias = [
+            'Requeridas' => implode(', ', $categorias_requeridas),
+            'Faltan' => empty($faltan_categorias) ? '-' : implode(', ', $faltan_categorias)
+        ];
+
+        if ($peso_actividades_no_evaluables !== null) {
+            $detalle_categorias['Peso "Actividades no evaluables"'] = $peso_actividades_no_evaluables;
+            if ($peso_actividades_no_evaluables != 0) {
+                $detalle_categorias['Error peso'] = 'La categoría "Actividades no evaluables" debe tener peso 0';
+            }
+        } else {
+            $detalle_categorias['Peso "Actividades no evaluables"'] = '-';
+        }
+
+        $validaciones[] = [
+            'nombre' => 'Categorías del calificador',
+            'estado' => empty($faltan_categorias) && $peso_actividades_no_evaluables === 0,
+            'mensaje' => (empty($faltan_categorias) && $peso_actividades_no_evaluables === 0)
+                ? 'Todas las categorías requeridas están presentes y el peso es correcto'
+                : 'Faltan categorías o el peso de "Actividades no evaluables" no es 0',
+            'detalle' => $detalle_categorias
+        ];
+
         return $validaciones;
     }
 
@@ -482,6 +530,24 @@ class block_validacursos extends block_base {
             redirect(new moodle_url('/course/view.php', ['id' => $COURSE->id]), 'Foro de comunicación entre estudiantes creado', 2);
         }
 
+        // Crear categoría del calificador si se solicita
+        if ($catname = optional_param('creategradecat', '', PARAM_TEXT)) {
+            require_capability('moodle/grade:manage', $context);
+            require_once($CFG->libdir . '/gradelib.php');
+            require_once($CFG->dirroot . '/grade/lib.php');
+            $catname = trim($catname);
+            if ($catname !== '') {
+                $category = new grade_category([
+                    'courseid' => $COURSE->id,
+                    'fullname' => $catname,
+                    'aggregation' => 13, // Promedio simple de calificaciones
+                    'aggregationcoef' => ($catname === 'Actividades no evaluables') ? 0 : 1,
+                ]);
+                $category->insert();
+                redirect(new moodle_url('/course/view.php', ['id' => $COURSE->id]), 'Categoría "' . $catname . '" creada', 2);
+            }
+        }
+
         $html = '<h4>Valida Cursos</h4>';
         foreach ($validaciones as $i => $val) {
             $iconoid = uniqid('validacursos_icono_' . $i . '_');
@@ -510,6 +576,18 @@ class block_validacursos extends block_base {
                 if ($val['nombre'] === 'Foro de comunicación entre estudiantes' && !$val['estado'] && $label === 'Estado' && has_capability('moodle/course:manageactivities', $context)) {
                     // Icono de "añadir": ➕
                     $html .= ' <button title="Crear foro de comunicación entre estudiantes en la sección 0" style="border:none;background:none;padding:0;margin-left:6px;cursor:pointer;" onclick="if(confirm(\'¿Quieres crear el foro de comunicación entre estudiantes en la sección 0?\')){window.location.href=\'?createforoestudiantes=1&id=' . $COURSE->id . '\';}"><span style="font-size:1.1em;color:#28a745;">&#10133;</span></button>';
+                }
+                // Botones para crear categorías del calificador si faltan
+                if ($val['nombre'] === 'Categorías del calificador' && !$val['estado'] && $label === 'Faltan' && $valor !== '-') {
+                    $faltantes = explode(', ', $valor);
+                    foreach ($faltantes as $catfaltante) {
+                        $catfaltante = trim($catfaltante);
+                        if ($catfaltante !== '') {
+                            $catfaltante_esc = htmlspecialchars($catfaltante, ENT_QUOTES);
+                            $catfaltante_js = addslashes($catfaltante);
+                            $html .= '<br><button title="Crear categoría \'' . $catfaltante_esc . '" style="border:none;background:none;padding:0;margin-right:6px;cursor:pointer;" onclick="if(confirm(\'¿Quieres crear la categoría \\\'' . $catfaltante_js . '\\\' en el calificador?\')){window.location.href=\'?creategradecat=' . urlencode($catfaltante) . '&id=' . $COURSE->id . '\';}"><span style="font-size:1.1em;color:#28a745;">&#10133;</span></button> ' . $catfaltante_esc;
+                        }
+                    }
                 }
                 $html .= '<br>';
             }
