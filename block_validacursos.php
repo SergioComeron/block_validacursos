@@ -136,6 +136,7 @@ class block_validacursos extends block_base {
         $guiadocente_ok = false;
         $guiaurl = '';
         $guiaurlok = false;
+        $guia_docente_sin_acentos = false;
         // Obtener todos los módulos de la sección 0
         $section0mods = [];
         if ($section0id) {
@@ -156,28 +157,34 @@ class block_validacursos extends block_base {
                                 $guiaurlok = true;
                             }
                             break;
+                        } else if (trim($urlobj->name) === 'Guia Docente') {
+                            $guia_docente_sin_acentos = true;
                         }
                     }
                 }
             }
+        }
+        $detalle_guia = [
+            'Nombre buscado' => 'Guía Docente',
+            'Estado' => $guiadocente_ok
+                ? ('Encontrada en la sección 0 <a href="' . $guiaurl . '" target="_blank" style="margin-left:8px;">Ver</a>')
+                : 'No encontrada en la sección 0',
+            'URL' => $guiadocente_ok
+                ? (isset($urlobj->externalurl) ? s($urlobj->externalurl) : '-')
+                : '-',
+            'Validación URL' => $guiadocente_ok
+                ? ($guiaurlok ? 'La URL es válida' : 'La URL NO es válida (debe empezar por https://www.udima.es)')
+                : '-'
+        ];
+        if (!$guiadocente_ok && $guia_docente_sin_acentos) {
+            $detalle_guia['Aviso'] = 'Existe una URL llamada "Guia Docente" (sin acento en la i). Debe llamarse exactamente "Guía Docente".';
         }
         $validaciones[] = [
             'nombre' => 'Guía Docente en bloque cero',
             'estado' => $guiadocente_ok && $guiaurlok,
             'mensaje' => ($guiadocente_ok && $guiaurlok) ? 'Guía Docente encontrada y URL válida' :
                 ($guiadocente_ok ? 'Guía Docente encontrada pero URL NO válida' : 'Guía Docente NO encontrada'),
-            'detalle' => [
-                'Nombre buscado' => 'Guia Docente',
-                'Estado' => $guiadocente_ok
-                    ? ('Encontrada en la sección 0 <a href="' . $guiaurl . '" target="_blank" style="margin-left:8px;">Ver</a>')
-                    : 'No encontrada en la sección 0',
-                'URL' => $guiadocente_ok
-                    ? (isset($urlobj->externalurl) ? s($urlobj->externalurl) : '-')
-                    : '-',
-                'Validación URL' => $guiadocente_ok
-                    ? ($guiaurlok ? 'La URL es válida' : 'La URL NO es válida (debe empezar por https://www.udima.es)')
-                    : '-'
-            ]
+            'detalle' => $detalle_guia
         ];
 
         // Validación de datos de tutoría en bloque cero (label con claves mínimas)
@@ -318,7 +325,21 @@ class block_validacursos extends block_base {
             }
             // Guardar el peso de "Actividades no evaluables"
             if ($nombre === 'Actividades no evaluables') {
-                $peso_actividades_no_evaluables = $cat->aggregationcoef;
+                // Buscar el grade_item asociado a la categoría
+                $gradeitem = $DB->get_record('grade_items', [
+                    'itemtype' => 'category',
+                    'iteminstance' => $cat->id,
+                    'courseid' => $course->id
+                ]);
+                if ($gradeitem) {
+                    if (!empty($gradeitem->weightoverride)) {
+                        $peso_actividades_no_evaluables = $gradeitem->aggregationcoef2;
+                    } else {
+                        $peso_actividades_no_evaluables = $gradeitem->aggregationcoef;
+                    }
+                } else {
+                    $peso_actividades_no_evaluables = null;
+                }
             }
         }
 
@@ -329,7 +350,8 @@ class block_validacursos extends block_base {
 
         if ($peso_actividades_no_evaluables !== null) {
             $detalle_categorias['Peso "Actividades no evaluables"'] = $peso_actividades_no_evaluables;
-            if ($peso_actividades_no_evaluables != 0) {
+            // Compara como float, permitiendo pequeñas diferencias
+            if (abs((float)$peso_actividades_no_evaluables) > 0.00001) {
                 $detalle_categorias['Error peso'] = 'La categoría "Actividades no evaluables" debe tener peso 0';
             }
         } else {
@@ -338,7 +360,7 @@ class block_validacursos extends block_base {
 
         $validaciones[] = [
             'nombre' => 'Categorías del calificador',
-            'estado' => empty($faltan_categorias) && $peso_actividades_no_evaluables === 0,
+            'estado' => empty($faltan_categorias) && (is_null($peso_actividades_no_evaluables) || abs((float)$peso_actividades_no_evaluables) < 0.00001),
             'mensaje' => (empty($faltan_categorias) && $peso_actividades_no_evaluables === 0)
                 ? 'Todas las categorías requeridas están presentes y el peso es correcto'
                 : 'Faltan categorías o el peso de "Actividades no evaluables" no es 0',
@@ -533,6 +555,7 @@ class block_validacursos extends block_base {
         // Crear categoría del calificador si se solicita
         if ($catname = optional_param('creategradecat', '', PARAM_TEXT)) {
             require_capability('moodle/grade:manage', $context);
+            global $CFG; // <-- Añade esta línea
             require_once($CFG->libdir . '/gradelib.php');
             require_once($CFG->dirroot . '/grade/lib.php');
             $catname = trim($catname);
