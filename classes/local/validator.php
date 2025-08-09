@@ -144,7 +144,7 @@ class validator {
                         $urlobj = $urls[$cm->instance];
                         if (trim($urlobj->name) === 'Guía Docente') {
                             $guiadocente_ok = true;
-                            $guiaurl = (new moodle_url('/mod/url/view.php', ['id' => $cm->id]))->out();
+                            $guiaurl = (new \moodle_url('/mod/url/view.php', ['id' => $cm->id]))->out();
                             // Comprobar que la URL empieza por https://www.udima.es
                             if (strpos(trim($urlobj->externalurl), 'https://www.udima.es') === 0) {
                                 $guiaurlok = true;
