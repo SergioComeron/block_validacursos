@@ -17,6 +17,8 @@
 namespace block_validacursos\output;
 defined('MOODLE_INTERNAL') || die();
 
+require_once($CFG->libdir . '/tablelib.php'); // Necesario para \table_sql
+
 /**
  * Class issues_table
  *
@@ -31,41 +33,41 @@ class issues_table extends \table_sql {
 
         $columns = ['course', 'validation', 'state', 'firstseen', 'lastseen', 'resolvedat'];
         $headers = [
-            get_string('course'),
-            get_string('validation', 'block_validacursos'),
-            get_string('state', 'block_validacursos'),
-            get_string('firstseen', 'block_validacursos'),
-            get_string('lastseen', 'block_validacursos'),
-            get_string('resolvedat', 'block_validacursos'),
+            \get_string('course'),
+            \get_string('validation', 'block_validacursos'),
+            \get_string('state', 'block_validacursos'),
+            \get_string('firstseen', 'block_validacursos'),
+            \get_string('lastseen', 'block_validacursos'),
+            \get_string('resolvedat', 'block_validacursos'),
         ];
         $this->define_columns($columns);
         $this->define_headers($headers);
         $this->sortable(true, 'lastseen', SORT_DESC);
-        $this->no_sorting('course'); // Ordenar por fullname si lo necesitas con un alias.
+        $this->no_sorting('course');
         $this->collapsible(true);
     }
 
     public function col_course($row) {
         $url = new \moodle_url('/course/view.php', ['id' => $row->courseid]);
-        return \html_writer::link($url, format_string($row->coursename));
+        return \html_writer::link($url, \format_string($row->coursename));
     }
 
     public function col_state($row) {
         $isopen = is_null($row->resolvedat);
-        $label = $isopen ? get_string('open', 'block_validacursos') : get_string('resolved', 'block_validacursos');
+        $label = $isopen ? \get_string('open', 'block_validacursos') : \get_string('resolved', 'block_validacursos');
         $color = $isopen ? '#d9534f' : '#5cb85c';
         return \html_writer::span($label, '', ['style' => "color:{$color}"]);
     }
 
     public function col_firstseen($row) {
-        return $row->firstseen ? userdate($row->firstseen) : '-';
+        return $row->firstseen ? \userdate($row->firstseen) : '-';
     }
 
     public function col_lastseen($row) {
-        return $row->lastseen ? userdate($row->lastseen) : '-';
+        return $row->lastseen ? \userdate($row->lastseen) : '-';
     }
 
     public function col_resolvedat($row) {
-        return $row->resolvedat ? userdate($row->resolvedat) : '-';
+        return $row->resolvedat ? \userdate($row->resolvedat) : '-';
     }
 }
