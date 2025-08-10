@@ -25,12 +25,29 @@
 
 defined('MOODLE_INTERNAL') || die();
 
+$string['pluginname'] = 'Validacursos';
+
 $string['fechainiciovalidacion'] = 'Start date';
 $string['fechainiciovalidacion_desc'] = 'Start date that courses must have to be validated';
 $string['fechafinvalidacion'] = 'End date';
 $string['fechafinvalidacion_desc'] = 'End date that courses must have to be validated';
-$string['missingcourseid'] = 'Missingcourseid';
-$string['pluginname'] = 'Validacursos';
+
+$string['missingcourseid'] = 'Missing course id';
+
 $string['validacursos:addinstance'] = 'Add a new Validacursos block';
 $string['validacursos:myaddinstance'] = 'Add a new Validacursos block to Dashboard';
-$string['validacursos:view'] = 'Validacursos:view';
+$string['validacursos:view'] = 'View Validacursos block';
+
+// Report capability and strings.
+$string['validacursos:viewissuesreport'] = 'View validation issues report';
+$string['issuesreport'] = 'Courses with validation issues';
+$string['validation'] = 'Validation';
+$string['state'] = 'Status';
+$string['firstseen'] = 'First seen';
+$string['lastseen'] = 'Last seen';
+$string['resolvedat'] = 'Resolved at';
+$string['open'] = 'Open';
+$string['resolved'] = 'Resolved';
+$string['showopen'] = 'Open only';
+$string['showall'] = 'All';
+$string['downloadcsv'] = 'Download CSV';

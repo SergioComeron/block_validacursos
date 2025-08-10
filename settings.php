@@ -22,20 +22,41 @@
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 
+defined('MOODLE_INTERNAL') || die();
+
 require_once(__DIR__ . '/classes/admin_setting_configdate.php');
 
-if ($hassiteconfig) { // Solo mostrar la configuración a los administradores.
-    $settings->add(new admin_setting_configdate(  
-        'block_validacursos/fechainiciovalidacion',               // Nombre del ajuste con prefijo del bloque  
-        get_string('fechainiciovalidacion', 'block_validacursos'), // Nombre visible (cadena de idioma)  
-        get_string('fechainiciovalidacion_desc', 'block_validacursos'), // Descripción (cadena de idioma)  
-        time()  // Valor por defecto (timestamp actual, por ejemplo)  
-    ));
-    $settings->add(new admin_setting_configdate(  
-        'block_validacursos/fechafinvalidacion',               // Nombre del ajuste con prefijo del bloque  
-        get_string('fechafinvalidacion', 'block_validacursos'), // Nombre visible (cadena de idioma)  
-        get_string('fechafinvalidacion_desc', 'block_validacursos'), // Descripción (cadena de idioma)  
-        time()  // Valor por defecto (timestamp actual, por ejemplo)  
+if ($hassiteconfig) {
+    // No crear ni añadir la página: $settings ya lo hace Moodle.
+    if ($ADMIN->fulltree) {
+        $settings->add(new admin_setting_configdate(
+            'block_validacursos/fechainiciovalidacion',
+            get_string('fechainiciovalidacion', 'block_validacursos'),
+            get_string('fechainiciovalidacion_desc', 'block_validacursos'),
+            time()
+        ));
+        $settings->add(new admin_setting_configdate(
+            'block_validacursos/fechafinvalidacion',
+            get_string('fechafinvalidacion', 'block_validacursos'),
+            get_string('fechafinvalidacion_desc', 'block_validacursos'),
+            time()
+        ));
+
+        // Enlace dentro de la página de ajustes.
+        $reporturl = new moodle_url('/blocks/validacursos/report.php');
+        $settings->add(new admin_setting_heading(
+            'block_validacursos_reportlink',
+            get_string('issuesreport', 'block_validacursos'),
+            html_writer::link($reporturl, get_string('issuesreport', 'block_validacursos'))
+        ));
+    }
+
+    // Nodo externo opcional en el árbol de administración.
+    $ADMIN->add('blocksettings', new admin_externalpage(
+        'block_validacursos_report',
+        get_string('issuesreport', 'block_validacursos'),
+        new moodle_url('/blocks/validacursos/report.php'),
+        'block/validacursos:viewissuesreport'
     ));
 }
 

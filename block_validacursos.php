@@ -182,6 +182,13 @@ class block_validacursos extends block_base {
         $config = get_config('block_validacursos');
         $validaciones = $this->obtener_validaciones($COURSE, $config);
 
+        // Registrar incidencias negativas del curso en la tabla del bloque.
+        try {
+            \block_validacursos\local\logger::save_course_results_history($COURSE->id, $validaciones);
+        } catch (\Throwable $e) {
+            // No interrumpir el render del bloque si falla el guardado.
+        }
+
         // Procesar cambio de fecha si se solicita y el usuario tiene permisos
         if (optional_param('changestartdate', 0, PARAM_INT)) {
             require_capability('moodle/course:update', $context);

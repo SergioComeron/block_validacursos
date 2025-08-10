@@ -52,5 +52,13 @@ $capabilities = [
             'admin' => CAP_ALLOW
         ],
             'clonepermissionsfrom' => 'moodle/my:manageblocks'
-        )
+        ),
+    'block/validacursos:viewissuesreport' => [
+        'riskbitmask' => 0,
+        'captype' => 'read',
+        'contextlevel' => CONTEXT_SYSTEM,
+        'archetypes' => [
+            'manager' => CAP_ALLOW,
+        ],
+    ],
 ];
