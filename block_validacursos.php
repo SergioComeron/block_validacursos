@@ -180,6 +180,17 @@ class block_validacursos extends block_base {
         }
 
         $config = get_config('block_validacursos');
+
+        // Filtro por categorías permitidas (simple: coincidencia exacta).
+        $config = get_config('block_validacursos');
+        $allowedcsv = isset($config->allowedcategories) ? trim((string)$config->allowedcategories) : '';
+        if ($allowedcsv !== '') {
+            $allowed = array_filter(array_map('intval', explode(',', $allowedcsv)));
+            if (!in_array((int)$COURSE->category, $allowed, true)) {
+                return null; // Fuera de las categorías permitidas: no mostrar el bloque.
+            }
+        }
+
         $validaciones = $this->obtener_validaciones($COURSE, $config);
 
         // Registrar incidencias negativas del curso en la tabla del bloque.

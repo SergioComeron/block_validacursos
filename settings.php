@@ -29,6 +29,16 @@ require_once(__DIR__ . '/classes/admin_setting_configdate.php');
 if ($hassiteconfig) {
     // No crear ni añadir la página: $settings ya lo hace Moodle.
     if ($ADMIN->fulltree) {
+        // Lista de categorías.
+        $catoptions = \core_course_category::make_categories_list();
+        $settings->add(new admin_setting_configmultiselect(
+            'block_validacursos/allowedcategories',
+            get_string('allowedcategories', 'block_validacursos'),
+            get_string('allowedcategories_desc', 'block_validacursos'),
+            [], // Por defecto no restringe (se muestra en todas).
+            $catoptions
+        ));
+
         $settings->add(new admin_setting_configdate(
             'block_validacursos/fechainiciovalidacion',
             get_string('fechainiciovalidacion', 'block_validacursos'),

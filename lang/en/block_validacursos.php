@@ -51,3 +51,5 @@ $string['resolved'] = 'Resolved';
 $string['showopen'] = 'Open only';
 $string['showall'] = 'All';
 $string['downloadcsv'] = 'Download CSV';
+$string['allowedcategories'] = 'Allowed categories';
+$string['allowedcategories_desc'] = 'Select the course categories where the block will be displayed. If none is selected, the block will be shown in all courses.';
