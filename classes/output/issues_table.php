@@ -33,12 +33,12 @@ class issues_table extends \table_sql {
 
         $columns = ['course', 'validation', 'state', 'firstseen', 'lastseen', 'resolvedat'];
         $headers = [
-            \get_string('course'),
-            \get_string('validation', 'block_validacursos'),
-            \get_string('state', 'block_validacursos'),
-            \get_string('firstseen', 'block_validacursos'),
-            \get_string('lastseen', 'block_validacursos'),
-            \get_string('resolvedat', 'block_validacursos'),
+            get_string('course'),
+            get_string('validation', 'block_validacursos'),
+            get_string('state', 'block_validacursos'),
+            get_string('firstseen', 'block_validacursos'),
+            get_string('lastseen', 'block_validacursos'),
+            get_string('resolvedat', 'block_validacursos'),
         ];
         $this->define_columns($columns);
         $this->define_headers($headers);
@@ -54,7 +54,7 @@ class issues_table extends \table_sql {
 
     public function col_state($row) {
         $isopen = is_null($row->resolvedat);
-        $label = $isopen ? \get_string('open', 'block_validacursos') : \get_string('resolved', 'block_validacursos');
+        $label = $isopen ? get_string('open', 'block_validacursos') : get_string('resolved', 'block_validacursos');
         $color = $isopen ? '#d9534f' : '#5cb85c';
         return \html_writer::span($label, '', ['style' => "color:{$color}"]);
     }
