@@ -215,6 +215,80 @@ class block_validacursos extends block_base {
             }
         }
 
+        if (optional_param('createcronogramaactividades', 0, PARAM_INT)) {
+            require_capability('moodle/course:manageactivities', $context);
+            global $CFG;
+            require_once($CFG->dirroot . '/course/lib.php');
+            require_once($CFG->dirroot . '/course/modlib.php');
+
+            $plugindir = \core_component::get_plugin_directory('block', 'validacursos');
+            $tmplfile = $plugindir . '/content/cronograma_actividades.html';
+            $introhtml = is_readable($tmplfile) ? file_get_contents($tmplfile) : '<p>Cronograma de actividades calificables</p>';
+
+            $data = new stdClass();
+            $data->course = $COURSE->id;
+            $data->modulename = 'label';
+            $data->section = 0;
+            $data->visible = 1;
+            $data->visibleoncoursepage = 1;
+            $data->showdescription = 0;
+            $data->completion = 0;
+            $data->intro = $introhtml;
+            $data->introformat = FORMAT_HTML;
+            $data->introeditor = [
+                'text' => $introhtml,
+                'format' => FORMAT_HTML,
+                'itemid' => 0
+            ];
+            $data->name = 'Cronograma de actividades calificables';
+
+            create_module($data);
+            rebuild_course_cache($COURSE->id, true);
+            redirect(new moodle_url('/course/view.php', ['id' => $COURSE->id]), 'Cronograma de actividades calificables creado', 2);
+        }
+
+        if (optional_param('createcronogramasesiones', 0, PARAM_INT)) {
+            require_capability('moodle/course:manageactivities', $context);
+            global $CFG;
+            require_once($CFG->dirroot . '/course/lib.php');
+            require_once($CFG->dirroot . '/course/modlib.php');
+
+            $tmplfile = $CFG->dirroot . '/blocks/validacursos/content/cronograma_sesiones.html';
+            $introhtml = '';
+            if (is_readable($tmplfile)) {
+                $introhtml = file_get_contents($tmplfile);
+            } else {
+                // Traza para depurar si falla la ruta.
+                debugging('No se puede leer la plantilla: '.$tmplfile, DEBUG_DEVELOPER);
+                $introhtml = '<p>Cronograma de sesiones síncronas</p>';
+            }
+
+            $data = new stdClass();
+            $data->course = $COURSE->id;
+            $data->modulename = 'label';
+            $data->section = 0;
+            $data->visible = 1;
+            $data->visibleoncoursepage = 1;
+            $data->showdescription = 0;
+            $data->completion = 0;
+
+            // Redundancia segura: poner intro e introeditor.
+            $data->intro = $introhtml;
+            $data->introformat = FORMAT_HTML;
+            $data->introeditor = [
+                'text' => $introhtml,
+                'format' => FORMAT_HTML,
+                'itemid' => 0
+            ];
+
+            // (Opcional) nombre interno para identificar el recurso en informes.
+            $data->name = 'Cronograma de sesiones síncronas';
+
+            create_module($data);
+            rebuild_course_cache($COURSE->id, true);
+            redirect(new moodle_url('/course/view.php', ['id' => $COURSE->id]), 'Cronograma de sesiones síncronas creado', 2);
+        }
+
         // Procesar cambio de fecha de fin si se solicita y el usuario tiene permisos
         if (optional_param('changeenddate', 0, PARAM_INT)) {
             require_capability('moodle/course:update', $context);
@@ -290,6 +364,18 @@ class block_validacursos extends block_base {
                 if ($val['nombre'] === 'Foro de comunicación entre estudiantes' && !$val['estado'] && $label === 'Estado' && has_capability('moodle/course:manageactivities', $context)) {
                     // Icono de "añadir": ➕
                     $html .= ' <button title="Crear foro de comunicación entre estudiantes en la sección 0" style="border:none;background:none;padding:0;margin-left:6px;cursor:pointer;" onclick="if(confirm(\'¿Quieres crear el foro de comunicación entre estudiantes en la sección 0?\')){window.location.href=\'?createforoestudiantes=1&id=' . $COURSE->id . '\';}"><span style="font-size:1.1em;color:#28a745;">&#10133;</span></button>';
+                }
+                // Mostrar botón solo si es la validación del cronograma de sesiones síncronas, no está validada y el usuario tiene permisos
+                if ($val['nombre'] === 'Cronograma de sesiones síncronas en bloque cero'
+                    && !$val['estado']
+                    && has_capability('moodle/course:manageactivities', $context)) {
+                    $html .= ' <button title="Crear cronograma de sesiones síncronas" style="border:none;background:none;padding:0;margin-left:6px;cursor:pointer;" onclick="if(confirm(\'¿Crear el cronograma de sesiones síncronas en la sección 0?\')){window.location.href=\'?createcronogramasesiones=1&id=' . $COURSE->id . '\';}"><span style="font-size:1.1em;color:#28a745;">&#10133;</span></button>';
+                }
+
+                if ($val['nombre'] === 'Cronograma de actividades calificables en bloque cero'
+                    && !$val['estado']
+                    && has_capability('moodle/course:manageactivities', $context)) {
+                    $html .= ' <button title="Crear cronograma de actividades calificables" style="border:none;background:none;padding:0;margin-left:6px;cursor:pointer;" onclick="if(confirm(\'¿Crear el cronograma de actividades calificables en la sección 0?\')){window.location.href=\'?createcronogramaactividades=1&id=' . $COURSE->id . '\';}"><span style="font-size:1.1em;color:#28a745;">&#10133;</span></button>';
                 }
                 // Botones para crear categorías del calificador si faltan
                 if ($val['nombre'] === 'Categorías del calificador' && !$val['estado'] && $label === 'Faltan' && $valor !== '-') {
