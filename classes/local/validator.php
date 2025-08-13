@@ -267,18 +267,23 @@ class validator {
             }
 
             foreach ($labels as $label) {
-                $intro = $label->intro;
-                // Comprobar que contiene una tabla y el texto buscado
+                $intro = (string)$label->intro;
                 $tiene_tabla = stripos($intro, '<table') !== false;
-                $tiene_texto = stripos(strip_tags($intro), $label_cronograma_texto) !== false;
-                // Evitar que sea el mismo label que el de tutoría (por ejemplo, comprobando que no contiene todas las claves de tutoría)
+
+                // Normalizar texto plano (el problema estaba aquí).
+                $plaintext = html_entity_decode(strip_tags($intro), ENT_QUOTES, 'UTF-8');
+                $normalized = preg_replace('/\s+/u', ' ', $plaintext);
+                $tiene_texto = (bool)preg_match('/CRONOGRAMA\s+DE\s+ACTIVIDADES\s+CALIFICABLES/u', $normalized);
+
+                // Evitar confundir con label de tutoría.
                 $es_label_tutoria = true;
                 foreach ($claves as $clave) {
-                    if (mb_stripos(strip_tags($intro), $clave) === false) {
+                    if (mb_stripos($plaintext, $clave) === false) { // Usa $plaintext ya normalizado
                         $es_label_tutoria = false;
                         break;
                     }
                 }
+
                 if ($tiene_tabla && $tiene_texto && !$es_label_tutoria) {
                     $label_cronograma_ok = true;
                     break;
@@ -321,11 +326,12 @@ class validator {
             }
 
             foreach ($labels as $label) {
-                $intro = $label->intro;
-                $tiene_tabla = stripos($intro, '<table') !== false;
-                $tiene_texto = stripos(strip_tags($intro), $label_sesiones_texto) !== false;
-
-                // Evitar confundir con el label de tutoría (no debe contener todas las claves de tutoría).
+                $introhtml = (string)$label->intro;
+                $plaintext = html_entity_decode(strip_tags($introhtml), ENT_QUOTES, 'UTF-8');
+                $normalized = preg_replace('/\s+/u', ' ', $plaintext);
+                $tiene_texto = (bool)preg_match('/CRONOGRAMA\s+DE\s+SESIONES\s+SÍNCRONAS/u', $normalized);
+                $tiene_tabla = stripos($introhtml, '<table') !== false;
+                // Evitar que sea el mismo label que el de tutoría (por ejemplo, comprobando que no contiene todas las claves de tutoría)
                 $es_label_tutoria = true;
                 foreach ($claves as $clave) {
                     if (mb_stripos(strip_tags($intro), $clave) === false) {
@@ -333,7 +339,6 @@ class validator {
                         break;
                     }
                 }
-
                 if ($tiene_tabla && $tiene_texto && !$es_label_tutoria) {
                     $label_sesiones_ok = true;
                     break;
