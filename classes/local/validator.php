@@ -242,120 +242,43 @@ class validator {
             'detalle' => $detalle_label
         ];
 
-        // Validación de label con tabla y texto "CRONOGRAMA DE ACTIVIDADES CALIFICABLES" en bloque cero
-        $label_cronograma_ok = false;
-        $label_cronograma_faltas = [];
-        $label_cronograma_texto = 'CRONOGRAMA DE ACTIVIDADES CALIFICABLES';
-
-        if ($section0id) {
-            // Reutilizamos $section0mods y $labels si ya están definidos, si no, los obtenemos
-            if (!isset($section0mods) || !$section0mods) {
-                $section0mods = $DB->get_records('course_modules', [
-                    'course' => $course->id,
-                    'section' => $section0id,
-                    'module' => $label_module_id
-                ]);
-            }
-            if (!isset($labels) || !$labels) {
-                if ($section0mods) {
-                    $label_instances = array_map(function($cm) { return $cm->instance; }, $section0mods);
-                    list($in_sql, $params) = $DB->get_in_or_equal($label_instances);
-                    $labels = $DB->get_records_select('label', "id $in_sql", $params);
-                } else {
-                    $labels = [];
-                }
-            }
-
-            foreach ($labels as $label) {
-                $intro = (string)$label->intro;
-                $tiene_tabla = stripos($intro, '<table') !== false;
-
-                // Normalizar texto plano (el problema estaba aquí).
-                $plaintext = html_entity_decode(strip_tags($intro), ENT_QUOTES, 'UTF-8');
-                $normalized = preg_replace('/\s+/u', ' ', $plaintext);
-                $tiene_texto = (bool)preg_match('/CRONOGRAMA\s+DE\s+ACTIVIDADES\s+CALIFICABLES/u', $normalized);
-
-                // Evitar confundir con label de tutoría.
-                $es_label_tutoria = true;
-                foreach ($claves as $clave) {
-                    if (mb_stripos($plaintext, $clave) === false) { // Usa $plaintext ya normalizado
-                        $es_label_tutoria = false;
-                        break;
-                    }
-                }
-
-                if ($tiene_tabla && $tiene_texto && !$es_label_tutoria) {
-                    $label_cronograma_ok = true;
-                    break;
-                }
-            }
-        }
+        // --- NUEVAS VALIDACIONES USANDO HELPER (reemplaza las específicas anteriores) ---
+        $cronograma_actividades_ok = self::existe_label_con_tabla_y_frase(
+            $course->id,
+            $section0id,
+            'CRONOGRAMA DE ACTIVIDADES CALIFICABLES',
+            $claves // Para excluir un label que sea realmente el de tutoría.
+        );
 
         $validaciones[] = [
             'nombre' => 'Cronograma de actividades calificables en bloque cero',
-            'estado' => $label_cronograma_ok,
-            'mensaje' => $label_cronograma_ok
+            'estado' => $cronograma_actividades_ok,
+            'mensaje' => $cronograma_actividades_ok
                 ? 'Cronograma encontrado'
                 : 'No se ha encontrado el cronograma en la sección 0',
             'detalle' => [
-                'Debe existir un recurso de tipo "Text and media area" (label) en la sección 0 que contenga una tabla y el texto: ' . $label_cronograma_texto
+                'Requisito' => 'Label en sección 0 con tabla y texto: CRONOGRAMA DE ACTIVIDADES CALIFICABLES'
             ]
         ];
 
-        // Validación de label con tabla y texto "CRONOGRAMA DE SESIONES SÍNCRONAS" en bloque cero
-        $label_sesiones_ok = false;
-        $label_sesiones_texto = 'CRONOGRAMA DE SESIONES SÍNCRONAS';
-
-        if ($section0id) {
-            // Reutilizar $section0mods y $labels si ya existen; si no, cargarlos.
-            if (!isset($section0mods) || !$section0mods) {
-                $section0mods = $DB->get_records('course_modules', [
-                    'course' => $course->id,
-                    'section' => $section0id,
-                    'module' => $label_module_id
-                ]);
-            }
-            if (!isset($labels) || !$labels) {
-                if ($section0mods) {
-                    $label_instances = array_map(function($cm) { return $cm->instance; }, $section0mods);
-                    list($in_sql, $params) = $DB->get_in_or_equal($label_instances);
-                    $labels = $DB->get_records_select('label', "id $in_sql", $params);
-                } else {
-                    $labels = [];
-                }
-            }
-
-            foreach ($labels as $label) {
-                $introhtml = (string)$label->intro;
-                $plaintext = html_entity_decode(strip_tags($introhtml), ENT_QUOTES, 'UTF-8');
-                $normalized = preg_replace('/\s+/u', ' ', $plaintext);
-                $tiene_texto = (bool)preg_match('/CRONOGRAMA\s+DE\s+SESIONES\s+SÍNCRONAS/u', $normalized);
-                $tiene_tabla = stripos($introhtml, '<table') !== false;
-                // Evitar que sea el mismo label que el de tutoría (por ejemplo, comprobando que no contiene todas las claves de tutoría)
-                $es_label_tutoria = true;
-                foreach ($claves as $clave) {
-                    if (mb_stripos(strip_tags($intro), $clave) === false) {
-                        $es_label_tutoria = false;
-                        break;
-                    }
-                }
-                if ($tiene_tabla && $tiene_texto && !$es_label_tutoria) {
-                    $label_sesiones_ok = true;
-                    break;
-                }
-            }
-        }
+        $cronograma_sesiones_ok = self::existe_label_con_tabla_y_frase(
+            $course->id,
+            $section0id,
+            'CRONOGRAMA DE SESIONES SÍNCRONAS',
+            $claves
+        );
 
         $validaciones[] = [
             'nombre' => 'Cronograma de sesiones síncronas en bloque cero',
-            'estado' => $label_sesiones_ok,
-            'mensaje' => $label_sesiones_ok
+            'estado' => $cronograma_sesiones_ok,
+            'mensaje' => $cronograma_sesiones_ok
                 ? 'Cronograma de sesiones encontrado'
                 : 'No se ha encontrado el cronograma de sesiones en la sección 0',
             'detalle' => [
-                'Debe existir un recurso de tipo "Text and media area" (label) en la sección 0 que contenga una tabla y el texto: ' . $label_sesiones_texto
+                'Requisito' => 'Label en sección 0 con tabla y texto: CRONOGRAMA DE SESIONES SÍNCRONAS'
             ]
         ];
+        // --- FIN NUEVAS VALIDACIONES ---
 
         // Validación de categorías del calificador.
         $categorias_requeridas = [
@@ -422,20 +345,101 @@ class validator {
 
         return $validaciones;
 
-
-
-        // Aquí se agregarían las validaciones específicas.
-        return $result;
+        // Código muerto eliminado.
     }
 
     /**
      * Valida si las dos fechas son iguales (timestamp).
-     *
      * @param int $fecha1
      * @param int $fecha2
      * @return bool
      */
     private static function fechas_son_iguales($fecha1, $fecha2) {
         return (int)$fecha1 === (int)$fecha2;
+    }
+
+    /**
+     * Helper: normaliza texto HTML (elimina etiquetas, decodifica entidades y comprime espacios).
+     * @param string $html
+     * @return string
+     */
+    private static function normalizar_texto(string $html): string {
+        $plaintext = html_entity_decode(strip_tags((string)$html), ENT_QUOTES, 'UTF-8');
+        return preg_replace('/\s+/u', ' ', trim($plaintext));
+    }
+
+    /**
+     * Helper: comprueba si el HTML de un label contiene (relajado) todas las palabras de la frase
+     * con cualquier cantidad de espacios intermedios. Ignora mayúsculas/minúsculas y saltos.
+     * @param string $html
+     * @param string $frase
+     * @return bool
+     */
+    private static function label_contiene_frase_relajada(string $html, string $frase): bool {
+        $normalized = self::normalizar_texto($html);
+        $parts = preg_split('/\s+/u', trim($frase));
+        if (empty($parts)) {
+            return false;
+        }
+        $pattern = '/'.implode('\s+', array_map('preg_quote', $parts)).'/iu';
+        return (bool)preg_match($pattern, $normalized);
+    }
+
+    /**
+     * Helper genérico: devuelve true si existe en la sección 0 un label que contenga
+     * (a) una tabla (<table) y (b) la frase relajada indicada, excluyendo labels que contengan
+     * todas las claves de exclusión (por ejemplo, datos de tutoría).
+     *
+     * @param int $courseid
+     * @param int $section0id
+     * @param string $frase
+     * @param array $clavesexclusion (cada clave debe aparecer para excluir)
+     * @return bool
+     */
+    private static function existe_label_con_tabla_y_frase(int $courseid, int $section0id, string $frase, array $clavesexclusion = []): bool {
+        global $DB;
+        if (!$section0id) {
+            return false;
+        }
+        $labelmoduleid = $DB->get_field('modules', 'id', ['name' => 'label'], IGNORE_MISSING);
+        if (!$labelmoduleid) {
+            return false;
+        }
+        $cms = $DB->get_records('course_modules', [
+            'course' => $courseid,
+            'section' => $section0id,
+            'module' => $labelmoduleid
+        ]);
+        if (!$cms) {
+            return false;
+        }
+        $instances = array_map(fn($cm) => $cm->instance, $cms);
+        list($in, $params) = $DB->get_in_or_equal($instances, SQL_PARAMS_NAMED);
+        $labels = $DB->get_records_select('label', "id $in", $params);
+        foreach ($labels as $label) {
+            $html = (string)$label->intro;
+            if (stripos($html, '<table') === false) {
+                continue;
+            }
+            if (!self::label_contiene_frase_relajada($html, $frase)) {
+                continue;
+            }
+            if ($clavesexclusion) {
+                $normalized = self::normalizar_texto($html);
+                $todos = true;
+                foreach ($clavesexclusion as $clave) {
+                    if (mb_stripos($normalized, self::normalizar_texto($clave)) === false) {
+                        $todos = false;
+                        break;
+                    }
+                }
+                if ($todos) {
+                    // Es un label de exclusión (ej: tutoría), descartamos.
+                    continue;
+                }
+            }
+            return true;
+        }
+        return false;
     }
 }
