@@ -17,6 +17,8 @@
 namespace block_validacursos\local;
 defined('MOODLE_INTERNAL') || die();
 
+use \core_text; // <-- añadir esta línea
+
 /**
  * Class validator
  *
@@ -103,7 +105,8 @@ class validator {
         foreach ($foros_a_validar as $finfo) {
             $foro_ok = false;
             foreach ($foros as $f) {
-                if ($f->type === $finfo['type'] && $f->name === $finfo['titulo']) {
+                if ($f->type === $finfo['type']
+                    && core_text::strtolower(trim($f->name)) === core_text::strtolower(trim($finfo['titulo']))) {
                     $cm = $cms_by_instance[$f->id] ?? null;
                     if ($cm && $cm->section == $section0id) {
                         $foro_ok = true;
@@ -115,9 +118,7 @@ class validator {
             $validaciones[] = [
                 'nombre' => $finfo['nombre'],
                 'estado' => $foro_ok,
-                'mensaje' => $foro_ok
-                    ? "Validado"
-                    : "No validado",
+                'mensaje' => $foro_ok ? "Validado" : "No validado",
                 'detalle' => [
                     'Nombre buscado' => $finfo['titulo'],
                     'Estado' => $foro_ok ? 'Encontrado en la primera sección' : 'No encontrado o fuera de sección'
@@ -142,23 +143,31 @@ class validator {
                 if ($cm->module == $DB->get_field('modules', 'id', ['name' => 'url'])) {
                     if (isset($urls[$cm->instance])) {
                         $urlobj = $urls[$cm->instance];
-                        if (trim($urlobj->name) === 'Guía Docente') {
+                        $name = trim($urlobj->name);
+
+                        // Prefijo con acento (válido).
+                        if (preg_match('/^guía docente\b/iu', $name)) {
                             $guiadocente_ok = true;
                             $guiaurl = (new \moodle_url('/mod/url/view.php', ['id' => $cm->id]))->out();
-                            // Comprobar que la URL empieza por https://www.udima.es
                             if (strpos(trim($urlobj->externalurl), 'https://www.udima.es') === 0) {
                                 $guiaurlok = true;
                             }
+                            // Encontrado válido, salimos.
                             break;
-                        } else if (trim($urlobj->name) === 'Guia Docente') {
+                        }
+
+                        // Prefijo sin acento (aviso).
+                        if (preg_match('/^guia docente\b/iu', $name)) {
                             $guia_docente_sin_acentos = true;
+                            // No break: podría existir otro con acento correcto.
                         }
                     }
                 }
             }
         }
+
         $detalle_guia = [
-            'Nombre buscado' => 'Guía Docente',
+            'Nombre buscado' => 'Guía Docente (prefijo, p.e. "Guía Docente", "Guía Docente de la asignatura")',
             'Estado' => $guiadocente_ok
                 ? ('Encontrada en la sección 0 <a href="' . $guiaurl . '" target="_blank" style="margin-left:8px;">Ver</a>')
                 : 'No encontrada en la sección 0',
@@ -170,13 +179,13 @@ class validator {
                 : '-'
         ];
         if (!$guiadocente_ok && $guia_docente_sin_acentos) {
-            $detalle_guia['Aviso'] = 'Existe una URL llamada "Guia Docente" (sin acento en la i). Debe llamarse exactamente "Guía Docente".';
+            $detalle_guia['Aviso'] = 'Existe un recurso cuyo título empieza por "Guia Docente" (sin acento en la i). Debe empezar por "Guía Docente".';
         }
         $validaciones[] = [
             'nombre' => 'Guía Docente en bloque cero',
             'estado' => $guiadocente_ok && $guiaurlok,
-            'mensaje' => ($guiadocente_ok && $guiaurlok) ? 'Guía Docente encontrada y URL válida' :
-                ($guiadocente_ok ? 'Guía Docente encontrada pero URL NO válida' : 'Guía Docente NO encontrada'),
+            'mensaje' => ($guiadocente_ok && $guiaurlok) ? 'Guía Docente encontrada y URL válida'
+                : ($guiadocente_ok ? 'Guía Docente encontrada pero URL NO válida' : 'Guía Docente NO encontrada'),
             'detalle' => $detalle_guia
         ];
 
