@@ -418,7 +418,7 @@ class block_validacursos extends block_base {
     public function applicable_formats() {
         return [
             'course-view' => true, // Solo disponible en cursos.
-            'site' => false,       // No disponible en la página principal.
+            'site' => true,       // Disponible en la página principal.
             'my' => false,         // No disponible en "Mi área".
         ];
     }
