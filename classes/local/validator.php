@@ -104,25 +104,44 @@ class validator {
 
         foreach ($foros_a_validar as $finfo) {
             $foro_ok = false;
+            $foro_nombre_tipo_incorrecto = false; // Nombre coincide pero el tipo no.
             foreach ($foros as $f) {
-                if ($f->type === $finfo['type']
-                    && core_text::strtolower(trim($f->name)) === core_text::strtolower(trim($finfo['titulo']))) {
-                    $cm = $cms_by_instance[$f->id] ?? null;
-                    if ($cm && $cm->section == $section0id) {
-                        $foro_ok = true;
+                $nombre_coincide = core_text::strtolower(trim($f->name)) === core_text::strtolower(trim($finfo['titulo']));
+                if ($nombre_coincide) {
+                    if ($f->type === $finfo['type']) {
+                        // Tipo correcto y nombre correcto: validamos ubicación.
+                        $cm = $cms_by_instance[$f->id] ?? null;
+                        if ($cm && $cm->section == $section0id) {
+                            $foro_ok = true;
+                            break; // Ya está validado, salimos.
+                        }
+                    } else {
+                        // Nombre correcto pero tipo erróneo.
+                        $foro_nombre_tipo_incorrecto = true;
+                        // No hacemos break: podría existir otro con el tipo correcto.
                     }
-                    break;
                 }
+            }
+
+            $estado_texto = $foro_ok ? 'Encontrado en la primera sección'
+                : ($foro_nombre_tipo_incorrecto
+                    ? 'Existe un foro con el nombre pero el tipo es incorrecto (se requiere foro de novedades)'
+                    : 'No encontrado o fuera de sección');
+
+            $detalle = [
+                'Nombre buscado' => $finfo['titulo'],
+                'Estado' => $estado_texto
+            ];
+            if (!$foro_ok && $foro_nombre_tipo_incorrecto) {
+                $detalle['Tipo detectado'] = 'general';
+                $detalle['Tipo requerido'] = $finfo['type'];
             }
 
             $validaciones[] = [
                 'nombre' => $finfo['nombre'],
                 'estado' => $foro_ok,
-                'mensaje' => $foro_ok ? "Validado" : "No validado",
-                'detalle' => [
-                    'Nombre buscado' => $finfo['titulo'],
-                    'Estado' => $foro_ok ? 'Encontrado en la primera sección' : 'No encontrado o fuera de sección'
-                ]
+                'mensaje' => $foro_ok ? 'Validado' : 'No validado',
+                'detalle' => $detalle
             ];
         }
 
@@ -399,13 +418,16 @@ class validator {
      * (a) una tabla (<table) y (b) la frase relajada indicada, excluyendo labels que contengan
      * todas las claves de exclusión (por ejemplo, datos de tutoría).
      *
+     * Acepta $section0id nullable para evitar TypeError en contextos (por ejemplo, página principal)
+     * donde no exista la sección 0 en la base de datos.
+     *
      * @param int $courseid
-     * @param int $section0id
+     * @param int|null $section0id
      * @param string $frase
      * @param array $clavesexclusion (cada clave debe aparecer para excluir)
      * @return bool
      */
-    private static function existe_label_con_tabla_y_frase(int $courseid, int $section0id, string $frase, array $clavesexclusion = []): bool {
+    private static function existe_label_con_tabla_y_frase(int $courseid, ?int $section0id, string $frase, array $clavesexclusion = []): bool {
         global $DB;
         if (!$section0id) {
             return false;
