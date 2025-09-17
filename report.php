@@ -45,6 +45,14 @@ $PAGE->set_pagelayout('report');
 $PAGE->set_title($pagetitle);
 $PAGE->set_heading($pagetitle);
 
+/*
+ * Cadenas mínimas usadas en el reporte por si aún no están en lang.
+ * (Opcional: elimina este bloque cuando añadas las cadenas al paquete de idioma).
+ */
+if (!function_exists('block_validacursos_temp_get_string')) {
+    // No-op helper.
+}
+
 $uniqueid = 'block_validacursos_issues';
 $table = new \block_validacursos\output\issues_table($uniqueid);
 $table->is_downloading($download, 'validacursos_issues', 'validacursos_issues');
@@ -89,6 +97,77 @@ if (!$table->is_downloading()) {
     echo html_writer::select(['0' => get_string('allcategories')] + $cats, 'category', $categoryid, null,
         ['onchange' => 'this.form.submit()']);
     echo html_writer::end_tag('form');
+
+    // ===== Métricas y agregados =====
+    global $DB;
+
+    // Totales (en la categoría seleccionada si procede).
+    $paramsall = [];
+    $whereall = '1=1';
+    if ($categoryid) {
+        $whereall .= ' AND c.category = :categoryid_all';
+        $paramsall['categoryid_all'] = $categoryid;
+    }
+    $countall = $DB->get_field_sql("SELECT COUNT(1) 
+                                      FROM {block_validacursos_issues} i 
+                                      JOIN {course} c ON c.id = i.courseid
+                                     WHERE $whereall", $paramsall);
+
+    $paramsopen = $paramsall;
+    $whereopen = $whereall . ' AND i.resolvedat IS NULL';
+    $countopen = $DB->get_field_sql("SELECT COUNT(1) 
+                                       FROM {block_validacursos_issues} i 
+                                       JOIN {course} c ON c.id = i.courseid
+                                      WHERE $whereopen", $paramsopen);
+
+    // Render totales.
+    $totalshtml = html_writer::div(
+        html_writer::tag('strong', get_string('totalissues', 'block_validacursos') . ': ') . (int)$countall
+        . ' &nbsp; | &nbsp; ' .
+        html_writer::tag('strong', get_string('openissues', 'block_validacursos') . ': ') . (int)$countopen,
+        'mb-3'
+    );
+    echo $totalshtml;
+
+    // Top cursos con más incidencias abiertas (respetando el filtro de categoría si existe).
+    $topparams = [];
+    $topwhere = '1=1 AND i.resolvedat IS NULL';
+    if ($categoryid) {
+        $topwhere .= ' AND c.category = :categoryid_top';
+        $topparams['categoryid_top'] = $categoryid;
+    }
+    $topcourses = $DB->get_records_sql("
+        SELECT i.courseid, c.fullname AS coursename, COUNT(1) AS issues
+          FROM {block_validacursos_issues} i
+          JOIN {course} c ON c.id = i.courseid
+         WHERE $topwhere
+      GROUP BY i.courseid, c.fullname
+      ORDER BY issues DESC, c.fullname ASC
+         LIMIT 10
+    ", $topparams);
+
+    if ($topcourses) {
+        $rows = [];
+        foreach ($topcourses as $tc) {
+            $courseurl = new moodle_url('/course/view.php', ['id' => $tc->courseid]);
+            $rows[] = html_writer::tag('tr',
+                html_writer::tag('td', html_writer::link($courseurl, format_string($tc->coursename))) .
+                html_writer::tag('td', (int)$tc->issues, ['style' => 'text-align:right'])
+            );
+        }
+        $tablehtml = html_writer::tag('table',
+            html_writer::tag('thead', html_writer::tag('tr',
+                html_writer::tag('th', get_string('course')) .
+                html_writer::tag('th', get_string('issues', 'block_validacursos'), ['style' => 'text-align:right'])
+            )) .
+            html_writer::tag('tbody', implode('', $rows)),
+            ['class' => 'generaltable boxaligncenter', 'style' => 'margin-top: .5rem;']
+        );
+        echo html_writer::tag('div',
+            html_writer::tag('h3', get_string('topcoursesopen', 'block_validacursos')) . $tablehtml,
+            ['class' => 'box generalbox mb-3']
+        );
+    }
 }
 
 // Tamaño de página y salida (paginada si no es descarga).

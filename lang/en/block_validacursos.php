@@ -25,6 +25,8 @@
 
 defined('MOODLE_INTERNAL') || die();
 
+$string['issues'] = 'Issues';
+$string['openissues'] = 'Open issues';
 $string['pluginname'] = 'Validacursos';
 
 $string['fechainiciovalidacion'] = 'Start date';
@@ -33,6 +35,8 @@ $string['fechafinvalidacion'] = 'End date';
 $string['fechafinvalidacion_desc'] = 'End date that courses must have to be validated';
 
 $string['missingcourseid'] = 'Missing course id';
+$string['topcoursesopen'] = 'Top courses open';
+$string['totalissues'] = 'Total issues';
 
 $string['validacursos:addinstance'] = 'Add a new Validacursos block';
 $string['validacursos:myaddinstance'] = 'Add a new Validacursos block to Dashboard';

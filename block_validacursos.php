@@ -29,7 +29,7 @@ class block_validacursos extends block_base {
      * Block initialisation
      */
     public function init() {
-        $this->title = '';
+        $this->title = get_string('pluginname', 'block_validacursos');
     }
 
     /**
@@ -407,6 +407,10 @@ class block_validacursos extends block_base {
      * @return bool
      */
     public function has_config() {
+        return true;
+    }
+
+    public function hide_header() {
         return true;
     }
 
