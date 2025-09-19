@@ -31,19 +31,24 @@ class issues_table extends \table_sql {
     public function __construct(string $uniqueid) {
         parent::__construct($uniqueid);
 
-        $columns = ['course', 'validation', 'state', 'firstseen', 'lastseen', 'resolvedat'];
+        $columns = ['id', 'courseid', 'course', 'courseshortname', 'validation', 'state', 'firstseen', 'lastseen', 'resolvedat', 'teachers'];
+
         $headers = [
+            get_string('id', 'block_validacursos'),
+            get_string('courseid', 'block_validacursos'),
             get_string('course'),
+            get_string('shortname'),
             get_string('validation', 'block_validacursos'),
             get_string('state', 'block_validacursos'),
             get_string('firstseen', 'block_validacursos'),
             get_string('lastseen', 'block_validacursos'),
             get_string('resolvedat', 'block_validacursos'),
+            get_string('teachers', 'block_validacursos')
         ];
         $this->define_columns($columns);
         $this->define_headers($headers);
         $this->sortable(true, 'lastseen', SORT_DESC);
-        $this->no_sorting('course');
+        $this->no_sorting('teachers');
         $this->collapsible(true);
     }
 
@@ -70,4 +75,17 @@ class issues_table extends \table_sql {
     public function col_resolvedat($row) {
         return $row->resolvedat ? \userdate($row->resolvedat) : '-';
     }
+
+    protected function col_courseshortname($row) {
+        return isset($row->courseshortname) ? format_string($row->courseshortname) : '';
+    }
+
+    protected function col_teachers($row) {
+        $list = isset($row->teachers) ? trim((string)$row->teachers) : '';
+        if ($list === '') {
+            return \html_writer::span('—', 'dimmed_text');
+        }
+        return s($list);
+    }
+
 }

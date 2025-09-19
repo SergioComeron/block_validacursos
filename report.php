@@ -59,11 +59,33 @@ $table->is_downloading($download, 'validacursos_issues', 'validacursos_issues');
 $table->define_baseurl($PAGE->url);
 
 // SQL
-$fields = 'i.id, i.courseid, c.fullname AS coursename, i.validation, i.firstseen, i.lastseen, i.resolvedat';
+$contextcourselevel = CONTEXT_COURSE;
+$dbfamily = $DB->get_dbfamily();
+if ($dbfamily === 'postgres') {
+    $teacherselect = "(SELECT string_agg(COALESCE(u.firstname,'') || ' ' || COALESCE(u.lastname,''), ', ' ORDER BY u.lastname, u.firstname)
+                         FROM {role_assignments} ra
+                         JOIN {context} ctx ON ctx.id = ra.contextid
+                         JOIN {role} r ON r.id = ra.roleid
+                         JOIN {user} u ON u.id = ra.userid
+                        WHERE ctx.contextlevel = :ctxlevel AND ctx.instanceid = i.courseid
+                          AND r.archetype IN ('editingteacher','teacher') AND u.deleted = 0)";
+} else { // mysql/mariadb fallback
+    $teacherselect = "(SELECT GROUP_CONCAT(CONCAT(u.firstname, ' ', u.lastname) ORDER BY u.lastname SEPARATOR ', ')
+                         FROM {role_assignments} ra
+                         JOIN {context} ctx ON ctx.id = ra.contextid
+                         JOIN {role} r ON r.id = ra.roleid
+                         JOIN {user} u ON u.id = ra.userid
+                        WHERE ctx.contextlevel = :ctxlevel AND ctx.instanceid = i.courseid
+                          AND r.archetype IN ('editingteacher','teacher') AND u.deleted = 0)";
+}
+
+$fields = 'i.id, i.courseid, c.shortname AS courseshortname, c.fullname AS coursename, ' .
+          'i.validation, i.firstseen, i.lastseen, i.resolvedat, ' . $teacherselect . ' AS teachers';
 $from   = '{block_validacursos_issues} i JOIN {course} c ON c.id = i.courseid';
 
 $whereparts = [];
 $params = [];
+$params['ctxlevel'] = $contextcourselevel;
 if ($show !== 'all') {
     $whereparts[] = 'i.resolvedat IS NULL';
 }
