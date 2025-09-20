@@ -31,13 +31,14 @@ class issues_table extends \table_sql {
     public function __construct(string $uniqueid) {
         parent::__construct($uniqueid);
 
-        $columns = ['id', 'courseid', 'course', 'courseshortname', 'validation', 'state', 'firstseen', 'lastseen', 'resolvedat', 'teachers'];
+        $columns = ['id', 'courseid', 'course', 'courseshortname', 'categoryname', 'validation', 'state', 'firstseen', 'lastseen', 'resolvedat', 'teachers'];
 
         $headers = [
             get_string('id', 'block_validacursos'),
             get_string('courseid', 'block_validacursos'),
             get_string('course'),
             get_string('shortname'),
+            get_string('category'),
             get_string('validation', 'block_validacursos'),
             get_string('state', 'block_validacursos'),
             get_string('firstseen', 'block_validacursos'),
@@ -78,6 +79,10 @@ class issues_table extends \table_sql {
 
     protected function col_courseshortname($row) {
         return isset($row->courseshortname) ? format_string($row->courseshortname) : '';
+    }
+
+    protected function col_categoryname($row) {
+        return isset($row->categoryname) ? format_string($row->categoryname) : '';
     }
 
     protected function col_teachers($row) {

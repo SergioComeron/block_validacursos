@@ -79,9 +79,15 @@ if ($dbfamily === 'postgres') {
                           AND r.archetype IN ('editingteacher','teacher') AND u.deleted = 0)";
 }
 
+$shortwithcat = 'c.shortname';
+
 $fields = 'i.id, i.courseid, c.shortname AS courseshortname, c.fullname AS coursename, ' .
+          'cc.name AS categoryname, ' .
           'i.validation, i.firstseen, i.lastseen, i.resolvedat, ' . $teacherselect . ' AS teachers';
-$from   = '{block_validacursos_issues} i JOIN {course} c ON c.id = i.courseid';
+
+$from   = '{block_validacursos_issues} i
+            JOIN {course} c ON c.id = i.courseid
+            JOIN {course_categories} cc ON cc.id = c.category';
 
 $whereparts = [];
 $params = [];

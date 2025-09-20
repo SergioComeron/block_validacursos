@@ -212,8 +212,8 @@ class validator {
         $label_module_id = $DB->get_field('modules', 'id', ['name' => 'label'], MUST_EXIST);
         $label_encontrado = false;
         $claves = [
-            'Profesor:',
-            'Correo electrónico:',
+            ['Profesor:', 'Profesora:', 'Docente:'],
+            ['Correo electrónico:', 'Correo:', 'Email:'],
             'Teléfono',
             'Extensión',
             'Horario de tutorías'
@@ -235,8 +235,21 @@ class validator {
                     $intro = strip_tags($label->intro);
                     $faltan_actual = [];
                     foreach ($claves as $clave) {
-                        if (mb_stripos($intro, $clave) === false) {
-                            $faltan_actual[] = $clave;
+                        if (is_array($clave)) {
+                            $encontrada = false;
+                            foreach ($clave as $variante) {
+                                if (mb_stripos($intro, $variante) !== false) {
+                                    $encontrada = true;
+                                    break;
+                                }
+                            }
+                            if (!$encontrada) {
+                                $faltan_actual[] = implode(' / ', $clave);
+                            }
+                        } else {
+                            if (mb_stripos($intro, $clave) === false) {
+                                $faltan_actual[] = $clave;
+                            }
                         }
                     }
                     if (empty($faltan_actual)) {
@@ -254,11 +267,15 @@ class validator {
         }
 
         $detalle_label = [
-            'Claves buscadas' => implode(', ', $claves),
+            'Claves buscadas' => implode(', ', array_map(function($c) {
+                return is_array($c) ? '[' . implode(' | ', $c) . ']' : $c;
+            }, $claves)),
             'Estado' => $label_encontrado ? 'Encontrado' : 'No encontrado'
         ];
         if (!$label_encontrado && count($faltan) > 0) {
-            $detalle_label['Faltan'] = implode(', ', $faltan);
+            $detalle_label['Faltan'] = implode(', ', array_map(function($c) {
+                return is_array($c) ? '[' . implode(' | ', $c) . ']' : $c;
+            }, $faltan));
         }
 
         $validaciones[] = [
@@ -323,12 +340,17 @@ class validator {
         $grade_categories = $DB->get_records('grade_categories', ['courseid' => $course->id]);
         foreach ($grade_categories as $cat) {
             $nombre = trim($cat->fullname);
-            $idx = array_search($nombre, $faltan_categorias);
-            if ($idx !== false) {
-                unset($faltan_categorias[$idx]);
+
+            // Quitar de la lista de faltantes con comparación *insensible a mayúsculas/minúsculas*.
+            foreach ($faltan_categorias as $i => $req) {
+                if (core_text::strtolower($nombre) === core_text::strtolower($req)) {
+                    unset($faltan_categorias[$i]);
+                    break;
+                }
             }
-            // Guardar el peso de "Actividades no evaluables"
-            if ($nombre === 'Actividades no evaluables') {
+
+            // Guardar el peso de "Actividades no evaluables" (también insensible a mayúsculas/minúsculas).
+            if (core_text::strtolower($nombre) === core_text::strtolower('Actividades no evaluables')) {
                 // Buscar el grade_item asociado a la categoría
                 $gradeitem = $DB->get_record('grade_items', [
                     'itemtype' => 'category',
@@ -459,9 +481,23 @@ class validator {
                 $normalized = self::normalizar_texto($html);
                 $todos = true;
                 foreach ($clavesexclusion as $clave) {
-                    if (mb_stripos($normalized, self::normalizar_texto($clave)) === false) {
-                        $todos = false;
-                        break;
+                    if (is_array($clave)) {
+                        $algunaVariante = false;
+                        foreach ($clave as $variante) {
+                            if (mb_stripos($normalized, self::normalizar_texto($variante)) !== false) {
+                                $algunaVariante = true;
+                                break;
+                            }
+                        }
+                        if (!$algunaVariante) {
+                            $todos = false;
+                            break;
+                        }
+                    } else {
+                        if (mb_stripos($normalized, self::normalizar_texto($clave)) === false) {
+                            $todos = false;
+                            break;
+                        }
                     }
                 }
                 if ($todos) {
