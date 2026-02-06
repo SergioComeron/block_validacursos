@@ -15,7 +15,7 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * Version information for Validacursos
+ * Scheduled tasks definition for block_validacursos.
  *
  * @package    block_validacursos
  * @copyright  2025 Sergio Comerón <info@sergiocomeron.com>
@@ -24,8 +24,14 @@
 
 defined('MOODLE_INTERNAL') || die();
 
-$plugin->component    = 'block_validacursos';
-$plugin->release      = '3.0';
-$plugin->version      = 2026020101;
-$plugin->requires     = 2022100700;
-$plugin->maturity     = MATURITY_STABLE;
+$tasks = [
+    [
+        'classname' => 'block_validacursos\task\validate_all_courses',
+        'blocking'  => 0,
+        'minute'    => 'R',
+        'hour'      => '2',
+        'day'       => '*',
+        'month'     => '*',
+        'dayofweek' => '*',
+    ],
+];

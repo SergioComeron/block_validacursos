@@ -105,6 +105,8 @@ class validator {
         foreach ($foros_a_validar as $finfo) {
             $foro_ok = false;
             $foro_nombre_tipo_incorrecto = false; // Nombre coincide pero el tipo no.
+            $foro_tipo_detectado = '';
+            $foro_id_detectado = 0;
             foreach ($foros as $f) {
                 $nombre_coincide = core_text::strtolower(trim($f->name)) === core_text::strtolower(trim($finfo['titulo']));
                 if ($nombre_coincide) {
@@ -118,6 +120,8 @@ class validator {
                     } else {
                         // Nombre correcto pero tipo erróneo.
                         $foro_nombre_tipo_incorrecto = true;
+                        $foro_tipo_detectado = $f->type;
+                        $foro_id_detectado = $f->id;
                         // No hacemos break: podría existir otro con el tipo correcto.
                     }
                 }
@@ -125,7 +129,7 @@ class validator {
 
             $estado_texto = $foro_ok ? 'Encontrado en la primera sección'
                 : ($foro_nombre_tipo_incorrecto
-                    ? 'Existe un foro con el nombre pero el tipo es incorrecto (se requiere foro de novedades)'
+                    ? 'Existe un foro con el nombre pero el tipo es incorrecto (se requiere tipo: ' . $finfo['type'] . ')'
                     : 'No encontrado o fuera de sección');
 
             $detalle = [
@@ -133,8 +137,9 @@ class validator {
                 'Estado' => $estado_texto
             ];
             if (!$foro_ok && $foro_nombre_tipo_incorrecto) {
-                $detalle['Tipo detectado'] = 'general';
+                $detalle['Tipo detectado'] = $foro_tipo_detectado;
                 $detalle['Tipo requerido'] = $finfo['type'];
+                $detalle['_forumid'] = $foro_id_detectado;
             }
 
             $validaciones[] = [
@@ -393,9 +398,159 @@ class validator {
             'detalle' => $detalle_categorias
         ];
 
-        return $validaciones;
+        // Validación: todas las actividades evaluables deben estar en una categoría del calificador.
+        // La categoría raíz del curso (depth=1) equivale a "Sin categoría" (uncategorised).
+        // Solo se muestra si existen actividades evaluables en el curso.
+        $cat_raiz = $DB->get_record('grade_categories', ['courseid' => $course->id, 'depth' => 1]);
+        $total_gradeitems = $DB->count_records('grade_items', [
+            'courseid' => $course->id,
+            'itemtype' => 'mod',
+        ]);
+        if ($total_gradeitems > 0) {
+            $sin_categoria = [];
+            if ($cat_raiz) {
+                $items_sin_cat = $DB->get_records('grade_items', [
+                    'courseid' => $course->id,
+                    'itemtype' => 'mod',
+                    'categoryid' => $cat_raiz->id,
+                ]);
+                foreach ($items_sin_cat as $gi) {
+                    $mod_id = $DB->get_field('modules', 'id', ['name' => $gi->itemmodule]);
+                    if (!$mod_id) {
+                        $sin_categoria[] = s($gi->itemname) . ' (' . s($gi->itemmodule) . ')';
+                        continue;
+                    }
+                    $cm = $DB->get_record('course_modules', [
+                        'course' => $course->id,
+                        'module' => $mod_id,
+                        'instance' => $gi->iteminstance,
+                    ]);
+                    if ($cm) {
+                        $url = (new \moodle_url('/course/modedit.php', ['update' => $cm->id]))->out();
+                        $sin_categoria[] = '<a href="' . $url . '">' . s($gi->itemname) . '</a> (' . s($gi->itemmodule) . ')';
+                    } else {
+                        $sin_categoria[] = s($gi->itemname) . ' (' . s($gi->itemmodule) . ')';
+                    }
+                }
+            }
 
-        // Código muerto eliminado.
+            $actividades_ok = empty($sin_categoria);
+            $validaciones[] = [
+                'nombre' => 'Actividades evaluables en categorías del calificador',
+                'estado' => $actividades_ok,
+                'mensaje' => $actividades_ok
+                    ? 'Todas las actividades evaluables están asignadas a una categoría'
+                    : 'Hay actividades evaluables sin categoría en el calificador',
+                'detalle' => $actividades_ok
+                    ? ['Estado' => 'Todas las actividades evaluables tienen categoría asignada']
+                    : ['Sin categoría' => implode(', ', $sin_categoria)],
+            ];
+        }
+
+        // Validación: todos los buzones de tareas deben tener el flujo de trabajo (markingworkflow) activado.
+        $assigns = $DB->get_records('assign', ['course' => $course->id]);
+        if ($assigns) {
+            $sin_workflow = [];
+            $assign_module_id = $DB->get_field('modules', 'id', ['name' => 'assign']);
+            foreach ($assigns as $assign) {
+                if (empty($assign->markingworkflow)) {
+                    $cm = $DB->get_record('course_modules', [
+                        'course' => $course->id,
+                        'module' => $assign_module_id,
+                        'instance' => $assign->id,
+                    ]);
+                    if ($cm) {
+                        $url = (new \moodle_url('/course/modedit.php', ['update' => $cm->id]))->out();
+                        $sin_workflow[] = '<a href="' . $url . '">' . s($assign->name) . '</a>';
+                    } else {
+                        $sin_workflow[] = s($assign->name);
+                    }
+                }
+            }
+
+            $workflow_ok = empty($sin_workflow);
+            $validaciones[] = [
+                'nombre' => 'Flujo de trabajo en buzones de tareas',
+                'estado' => $workflow_ok,
+                'mensaje' => $workflow_ok
+                    ? 'Todos los buzones tienen el flujo de trabajo activado'
+                    : 'Hay buzones sin flujo de trabajo activado',
+                'detalle' => $workflow_ok
+                    ? ['Estado' => 'Todos los buzones de tareas tienen el flujo de trabajo activado']
+                    : ['Sin flujo de trabajo' => implode(', ', $sin_workflow)],
+            ];
+        }
+
+        // Validación: el curso debe tener la finalización activada.
+        $completion_enabled = !empty($course->enablecompletion);
+        $validaciones[] = [
+            'nombre' => 'Finalización de curso activada',
+            'estado' => $completion_enabled,
+            'mensaje' => $completion_enabled
+                ? 'La finalización de curso está activada'
+                : 'La finalización de curso NO está activada',
+            'detalle' => [
+                'Estado' => $completion_enabled
+                    ? 'Activada'
+                    : 'Desactivada. Activar en ajustes del curso > Finalización.',
+            ]
+        ];
+
+        // Validación: todas las actividades evaluables deben tener condiciones de finalización.
+        // Solo se comprueba si la finalización del curso está activada.
+        if ($completion_enabled) {
+            $sin_finalizacion = [];
+            $grade_items_mod = $DB->get_records('grade_items', [
+                'courseid' => $course->id,
+                'itemtype' => 'mod',
+            ]);
+            foreach ($grade_items_mod as $gi) {
+                $mod_id = $DB->get_field('modules', 'id', ['name' => $gi->itemmodule]);
+                if (!$mod_id) {
+                    continue;
+                }
+                $cm = $DB->get_record('course_modules', [
+                    'course' => $course->id,
+                    'module' => $mod_id,
+                    'instance' => $gi->iteminstance,
+                ]);
+                if ($cm && empty($cm->completion)) {
+                    $url = (new \moodle_url('/course/modedit.php', ['update' => $cm->id]))->out();
+                    $sin_finalizacion[] = '<a href="' . $url . '">' . s($gi->itemname) . '</a>';
+                }
+            }
+
+            if (!empty($grade_items_mod)) {
+                $finalizacion_ok = empty($sin_finalizacion);
+                $validaciones[] = [
+                    'nombre' => 'Condiciones de finalización en actividades evaluables',
+                    'estado' => $finalizacion_ok,
+                    'mensaje' => $finalizacion_ok
+                        ? 'Todas las actividades evaluables tienen condiciones de finalización'
+                        : 'Hay actividades evaluables sin condiciones de finalización',
+                    'detalle' => $finalizacion_ok
+                        ? ['Estado' => 'Todas las actividades evaluables tienen condiciones de finalización configuradas']
+                        : ['Sin finalización' => implode(', ', $sin_finalizacion)],
+                ];
+            }
+        }
+
+        // Validación: el curso debe tener activada la opción de mostrar fechas de actividad.
+        $showactivitydates = !empty($course->showactivitydates);
+        $validaciones[] = [
+            'nombre' => 'Mostrar fechas de actividad',
+            'estado' => $showactivitydates,
+            'mensaje' => $showactivitydates
+                ? 'La opción de mostrar fechas de actividad está activada'
+                : 'La opción de mostrar fechas de actividad NO está activada',
+            'detalle' => [
+                'Estado' => $showactivitydates
+                    ? 'Activada'
+                    : 'Desactivada. Activar en ajustes del curso > Apariencia.',
+            ]
+        ];
+
+        return $validaciones;
     }
 
     /**

@@ -317,6 +317,34 @@ class block_validacursos extends block_base {
             redirect(new moodle_url('/course/view.php', ['id' => $COURSE->id]), 'Foro de comunicación entre estudiantes creado', 2);
         }
 
+        // Activar finalización del curso si se solicita
+        if (optional_param('enablecompletion', 0, PARAM_INT)) {
+            require_capability('moodle/course:update', $context);
+            $DB->set_field('course', 'enablecompletion', 1, ['id' => $COURSE->id]);
+            rebuild_course_cache($COURSE->id, true);
+            redirect(new moodle_url('/course/view.php', ['id' => $COURSE->id]), 'Finalización de curso activada', 2);
+        }
+
+        // Activar mostrar fechas de actividad si se solicita
+        if (optional_param('enableshowactivitydates', 0, PARAM_INT)) {
+            require_capability('moodle/course:update', $context);
+            $DB->set_field('course', 'showactivitydates', 1, ['id' => $COURSE->id]);
+            rebuild_course_cache($COURSE->id, true);
+            redirect(new moodle_url('/course/view.php', ['id' => $COURSE->id]), 'Mostrar fechas de actividad activado', 2);
+        }
+
+        // Cambiar tipo de foro si se solicita
+        $changeforumtype_id = optional_param('changeforumtype', 0, PARAM_INT);
+        if ($changeforumtype_id) {
+            require_capability('moodle/course:manageactivities', $context);
+            $newtype = optional_param('newtype', '', PARAM_ALPHA);
+            if ($newtype !== '' && $DB->record_exists('forum', ['id' => $changeforumtype_id, 'course' => $COURSE->id])) {
+                $DB->set_field('forum', 'type', $newtype, ['id' => $changeforumtype_id]);
+                rebuild_course_cache($COURSE->id, true);
+                redirect(new moodle_url('/course/view.php', ['id' => $COURSE->id]), 'Tipo de foro actualizado', 2);
+            }
+        }
+
         // Crear categoría del calificador si se solicita
         if ($catname = optional_param('creategradecat', '', PARAM_TEXT)) {
             require_capability('moodle/grade:manage', $context);
@@ -345,6 +373,10 @@ class block_validacursos extends block_base {
             $html .= '<span style="cursor:pointer;vertical-align:middle;" onclick="var d=document.getElementById(\'' . $iconoid . '\');d.style.display=d.style.display==\'none\'?\'block\':\'none\';">' . $val['nombre'] . '</span>';
             $html .= '<div id="' . $iconoid . '" style="display:none;margin-top:4px;padding:6px;border:1px solid #ccc;background:#f9f9f9;font-size:0.95em;">';
             foreach ($val['detalle'] as $label => $valor) {
+                // No mostrar campos internos (prefijo _).
+                if (strpos($label, '_') === 0) {
+                    continue;
+                }
                 $html .= '<strong>' . $label . ':</strong> ' . $valor;
                 // Mostrar botón solo si es la validación de fecha, no está validada y es el campo "Curso"
                 if ($val['nombre'] === 'Fecha de inicio' && !$val['estado'] && $label === 'Curso' && has_capability('moodle/course:update', $context)) {
@@ -355,15 +387,19 @@ class block_validacursos extends block_base {
                 if ($val['nombre'] === 'Fecha de fin' && !$val['estado'] && $label === 'Curso' && has_capability('moodle/course:update', $context)) {
                     $html .= ' <button title="Corregir la fecha por la configurada" style="border:none;background:none;padding:0;margin-left:6px;cursor:pointer;" onclick="if(confirm(\'¿Quieres corregir la fecha de fin del curso por la configurada?\')){window.location.href=\'?changeenddate=1&id=' . $COURSE->id . '\';}"><span style="font-size:1.1em;color:#007bff;">&#9998;</span></button>';
                 }
-                // Mostrar botón solo si es la validación del foro de tutorías, no está validada y es el campo "Estado"
-                if ($val['nombre'] === 'Foro de tutorías de la asignatura' && !$val['estado'] && $label === 'Estado' && has_capability('moodle/course:manageactivities', $context)) {
-                    // Icono de "añadir": ➕
-                    $html .= ' <button title="Crear foro de tutorías en la sección 0" style="border:none;background:none;padding:0;margin-left:6px;cursor:pointer;" onclick="if(confirm(\'¿Quieres crear el foro de tutorías de la asignatura en la sección 0?\')){window.location.href=\'?createforotutorias=1&id=' . $COURSE->id . '\';}"><span style="font-size:1.1em;color:#28a745;">&#10133;</span></button>';
-                }
-                // Mostrar botón solo si es la validación del foro de comunicación entre estudiantes, no está validada y es el campo "Estado"
-                if ($val['nombre'] === 'Foro de comunicación entre estudiantes' && !$val['estado'] && $label === 'Estado' && has_capability('moodle/course:manageactivities', $context)) {
-                    // Icono de "añadir": ➕
-                    $html .= ' <button title="Crear foro de comunicación entre estudiantes en la sección 0" style="border:none;background:none;padding:0;margin-left:6px;cursor:pointer;" onclick="if(confirm(\'¿Quieres crear el foro de comunicación entre estudiantes en la sección 0?\')){window.location.href=\'?createforoestudiantes=1&id=' . $COURSE->id . '\';}"><span style="font-size:1.1em;color:#28a745;">&#10133;</span></button>';
+                // Botones para foros: cambiar tipo (↻) y crear (+).
+                $foros_con_boton = [
+                    'Foro de tutorías de la asignatura' => 'createforotutorias',
+                    'Foro de comunicación entre estudiantes' => 'createforoestudiantes',
+                ];
+                if (isset($foros_con_boton[$val['nombre']]) && !$val['estado'] && $label === 'Estado' && has_capability('moodle/course:manageactivities', $context)) {
+                    if (!empty($val['detalle']['_forumid']) && !empty($val['detalle']['Tipo requerido'])) {
+                        $fid = (int)$val['detalle']['_forumid'];
+                        $reqtype = $val['detalle']['Tipo requerido'];
+                        $html .= ' <button title="Cambiar el tipo del foro existente a ' . s($reqtype) . '" style="border:none;background:none;padding:0;margin-left:6px;cursor:pointer;" onclick="if(confirm(\'¿Quieres cambiar el tipo del foro existente a ' . s($reqtype) . '?\')){window.location.href=\'?changeforumtype=' . $fid . '&newtype=' . urlencode($reqtype) . '&id=' . $COURSE->id . '\';}"><span style="font-size:1.1em;color:#007bff;">&#9998;</span></button>';
+                    }
+                    $action = $foros_con_boton[$val['nombre']];
+                    $html .= ' <button title="Crear ' . s($val['nombre']) . ' en la sección 0" style="border:none;background:none;padding:0;margin-left:6px;cursor:pointer;" onclick="if(confirm(\'¿Quieres crear ' . addslashes($val['nombre']) . ' en la sección 0?\')){window.location.href=\'?' . $action . '=1&id=' . $COURSE->id . '\';}"><span style="font-size:1.1em;color:#28a745;">&#10133;</span></button>';
                 }
                 // Mostrar botón solo si es la validación del cronograma de sesiones síncronas, no está validada y el usuario tiene permisos
                 if ($val['nombre'] === 'Cronograma de sesiones síncronas en bloque cero'
@@ -376,6 +412,14 @@ class block_validacursos extends block_base {
                     && !$val['estado']
                     && has_capability('moodle/course:manageactivities', $context)) {
                     $html .= ' <button title="Crear cronograma de actividades calificables" style="border:none;background:none;padding:0;margin-left:6px;cursor:pointer;" onclick="if(confirm(\'¿Crear el cronograma de actividades calificables en la sección 0?\')){window.location.href=\'?createcronogramaactividades=1&id=' . $COURSE->id . '\';}"><span style="font-size:1.1em;color:#28a745;">&#10133;</span></button>';
+                }
+                // Botón para activar finalización del curso
+                if ($val['nombre'] === 'Finalización de curso activada' && !$val['estado'] && $label === 'Estado' && has_capability('moodle/course:update', $context)) {
+                    $html .= ' <button title="Activar finalización de curso" style="border:none;background:none;padding:0;margin-left:6px;cursor:pointer;" onclick="if(confirm(\'¿Quieres activar la finalización de curso?\')){window.location.href=\'?enablecompletion=1&id=' . $COURSE->id . '\';}"><span style="font-size:1.1em;color:#007bff;">&#9998;</span></button>';
+                }
+                // Botón para activar mostrar fechas de actividad
+                if ($val['nombre'] === 'Mostrar fechas de actividad' && !$val['estado'] && $label === 'Estado' && has_capability('moodle/course:update', $context)) {
+                    $html .= ' <button title="Activar mostrar fechas de actividad" style="border:none;background:none;padding:0;margin-left:6px;cursor:pointer;" onclick="if(confirm(\'¿Quieres activar mostrar fechas de actividad?\')){window.location.href=\'?enableshowactivitydates=1&id=' . $COURSE->id . '\';}"><span style="font-size:1.1em;color:#007bff;">&#9998;</span></button>';
                 }
                 // Botones para crear categorías del calificador si faltan
                 if ($val['nombre'] === 'Categorías del calificador' && !$val['estado'] && $label === 'Faltan' && $valor !== '-') {
