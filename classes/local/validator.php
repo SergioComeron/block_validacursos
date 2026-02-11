@@ -108,7 +108,7 @@ class validator {
             $foro_tipo_detectado = '';
             $foro_id_detectado = 0;
             foreach ($foros as $f) {
-                $nombre_coincide = core_text::strtolower(trim($f->name)) === core_text::strtolower(trim($finfo['titulo']));
+                $nombre_coincide = self::normalizar_para_comparar($f->name) === self::normalizar_para_comparar($finfo['titulo']);
                 if ($nombre_coincide) {
                     if ($f->type === $finfo['type']) {
                         // Tipo correcto y nombre correcto: validamos ubicación.
@@ -154,7 +154,6 @@ class validator {
         $guiadocente_ok = false;
         $guiaurl = '';
         $guiaurlok = false;
-        $guia_docente_sin_acentos = false;
         // Obtener todos los módulos de la sección 0
         $section0mods = [];
         if ($section0id) {
@@ -167,23 +166,16 @@ class validator {
                 if ($cm->module == $DB->get_field('modules', 'id', ['name' => 'url'])) {
                     if (isset($urls[$cm->instance])) {
                         $urlobj = $urls[$cm->instance];
-                        $name = trim($urlobj->name);
+                        $name_normalizado = self::normalizar_para_comparar($urlobj->name);
 
-                        // Prefijo con acento (válido).
-                        if (preg_match('/^guía docente\b/iu', $name)) {
+                        // Comprobar que el nombre empiece por "guia docente" (normalizado, sin tildes).
+                        if (strpos($name_normalizado, 'guia docente') === 0) {
                             $guiadocente_ok = true;
                             $guiaurl = (new \moodle_url('/mod/url/view.php', ['id' => $cm->id]))->out();
                             if (strpos(trim($urlobj->externalurl), 'https://www.udima.es') === 0) {
                                 $guiaurlok = true;
                             }
-                            // Encontrado válido, salimos.
                             break;
-                        }
-
-                        // Prefijo sin acento (aviso).
-                        if (preg_match('/^guia docente\b/iu', $name)) {
-                            $guia_docente_sin_acentos = true;
-                            // No break: podría existir otro con acento correcto.
                         }
                     }
                 }
@@ -202,9 +194,6 @@ class validator {
                 ? ($guiaurlok ? 'La URL es válida' : 'La URL NO es válida (debe empezar por https://www.udima.es)')
                 : '-'
         ];
-        if (!$guiadocente_ok && $guia_docente_sin_acentos) {
-            $detalle_guia['Aviso'] = 'Existe un recurso cuyo título empieza por "Guia Docente" (sin acento en la i). Debe empezar por "Guía Docente".';
-        }
         $validaciones[] = [
             'nombre' => 'Guía Docente en bloque cero',
             'estado' => $guiadocente_ok && $guiaurlok,
@@ -237,13 +226,13 @@ class validator {
                 list($in_sql, $params) = $DB->get_in_or_equal($label_instances);
                 $labels = $DB->get_records_select('label', "id $in_sql", $params);
                 foreach ($labels as $label) {
-                    $intro = strip_tags($label->intro);
+                    $intro = self::normalizar_para_comparar(strip_tags($label->intro));
                     $faltan_actual = [];
                     foreach ($claves as $clave) {
                         if (is_array($clave)) {
                             $encontrada = false;
                             foreach ($clave as $variante) {
-                                if (mb_stripos($intro, $variante) !== false) {
+                                if (mb_strpos($intro, self::normalizar_para_comparar($variante)) !== false) {
                                     $encontrada = true;
                                     break;
                                 }
@@ -252,7 +241,7 @@ class validator {
                                 $faltan_actual[] = implode(' / ', $clave);
                             }
                         } else {
-                            if (mb_stripos($intro, $clave) === false) {
+                            if (mb_strpos($intro, self::normalizar_para_comparar($clave)) === false) {
                                 $faltan_actual[] = $clave;
                             }
                         }
@@ -346,16 +335,16 @@ class validator {
         foreach ($grade_categories as $cat) {
             $nombre = trim($cat->fullname);
 
-            // Quitar de la lista de faltantes con comparación *insensible a mayúsculas/minúsculas*.
+            // Quitar de la lista de faltantes con comparación insensible a mayúsculas y tildes.
             foreach ($faltan_categorias as $i => $req) {
-                if (core_text::strtolower($nombre) === core_text::strtolower($req)) {
+                if (self::normalizar_para_comparar($nombre) === self::normalizar_para_comparar($req)) {
                     unset($faltan_categorias[$i]);
                     break;
                 }
             }
 
-            // Guardar el peso de "Actividades no evaluables" (también insensible a mayúsculas/minúsculas).
-            if (core_text::strtolower($nombre) === core_text::strtolower('Actividades no evaluables')) {
+            // Guardar el peso de "Actividades no evaluables" (insensible a mayúsculas y tildes).
+            if (self::normalizar_para_comparar($nombre) === self::normalizar_para_comparar('Actividades no evaluables')) {
                 // Buscar el grade_item asociado a la categoría
                 $gradeitem = $DB->get_record('grade_items', [
                     'itemtype' => 'category',
@@ -498,13 +487,26 @@ class validator {
 
         // Validación: todas las actividades evaluables deben tener condiciones de finalización.
         // Solo se comprueba si la finalización del curso está activada.
+        // Se excluyen las actividades que estén en la categoría "Actividades no evaluables".
         if ($completion_enabled) {
             $sin_finalizacion = [];
+            // Obtener el ID de la categoría "Actividades no evaluables" para excluirla.
+            $cat_no_evaluables_id = null;
+            foreach ($grade_categories as $cat) {
+                if (self::normalizar_para_comparar($cat->fullname) === self::normalizar_para_comparar('Actividades no evaluables')) {
+                    $cat_no_evaluables_id = $cat->id;
+                    break;
+                }
+            }
             $grade_items_mod = $DB->get_records('grade_items', [
                 'courseid' => $course->id,
                 'itemtype' => 'mod',
             ]);
             foreach ($grade_items_mod as $gi) {
+                // Excluir actividades en la categoría "Actividades no evaluables".
+                if ($cat_no_evaluables_id && $gi->categoryid == $cat_no_evaluables_id) {
+                    continue;
+                }
                 $mod_id = $DB->get_field('modules', 'id', ['name' => $gi->itemmodule]);
                 if (!$mod_id) {
                     continue;
@@ -579,6 +581,26 @@ class validator {
     }
 
     /**
+     * Elimina tildes y diacríticos de un texto Unicode.
+     * Descompone los caracteres (NFD) y elimina los combining marks.
+     * @param string $texto
+     * @return string
+     */
+    private static function quitar_tildes(string $texto): string {
+        $texto = \Normalizer::normalize($texto, \Normalizer::FORM_D);
+        return preg_replace('/\pM/u', '', $texto);
+    }
+
+    /**
+     * Normaliza un texto para comparación: minúsculas, sin tildes, sin espacios extra.
+     * @param string $texto
+     * @return string
+     */
+    private static function normalizar_para_comparar(string $texto): string {
+        return self::quitar_tildes(core_text::strtolower(trim($texto)));
+    }
+
+    /**
      * Helper: normaliza texto HTML (elimina etiquetas, decodifica entidades y comprime espacios).
      * @param string $html
      * @return string
@@ -596,8 +618,8 @@ class validator {
      * @return bool
      */
     private static function label_contiene_frase_relajada(string $html, string $frase): bool {
-        $normalized = self::normalizar_texto($html);
-        $parts = preg_split('/\s+/u', trim($frase));
+        $normalized = self::quitar_tildes(self::normalizar_texto($html));
+        $parts = preg_split('/\s+/u', trim(self::quitar_tildes($frase)));
         if (empty($parts)) {
             return false;
         }
@@ -648,13 +670,13 @@ class validator {
                 continue;
             }
             if ($clavesexclusion) {
-                $normalized = self::normalizar_texto($html);
+                $normalized = self::normalizar_para_comparar(self::normalizar_texto($html));
                 $todos = true;
                 foreach ($clavesexclusion as $clave) {
                     if (is_array($clave)) {
                         $algunaVariante = false;
                         foreach ($clave as $variante) {
-                            if (mb_stripos($normalized, self::normalizar_texto($variante)) !== false) {
+                            if (mb_strpos($normalized, self::normalizar_para_comparar($variante)) !== false) {
                                 $algunaVariante = true;
                                 break;
                             }
@@ -664,7 +686,7 @@ class validator {
                             break;
                         }
                     } else {
-                        if (mb_stripos($normalized, self::normalizar_texto($clave)) === false) {
+                        if (mb_strpos($normalized, self::normalizar_para_comparar($clave)) === false) {
                             $todos = false;
                             break;
                         }
