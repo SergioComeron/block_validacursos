@@ -535,6 +535,21 @@ class validator {
             }
         }
 
+        // Validación: el curso debe tener activada la opción de mostrar condiciones de finalización de actividad.
+        $showcompletionconditions = !empty($course->showcompletionconditions);
+        $validaciones[] = [
+            'nombre' => 'Mostrar condiciones de finalización de actividad',
+            'estado' => $showcompletionconditions,
+            'mensaje' => $showcompletionconditions
+                ? 'La opción de mostrar condiciones de finalización está activada'
+                : 'La opción de mostrar condiciones de finalización NO está activada',
+            'detalle' => [
+                'Estado' => $showcompletionconditions
+                    ? 'Activada'
+                    : 'Desactivada. Activar en ajustes del curso > Finalización.',
+            ]
+        ];
+
         // Validación: el curso debe tener activada la opción de mostrar fechas de actividad.
         $showactivitydates = !empty($course->showactivitydates);
         $validaciones[] = [

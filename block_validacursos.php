@@ -325,6 +325,14 @@ class block_validacursos extends block_base {
             redirect(new moodle_url('/course/view.php', ['id' => $COURSE->id]), 'Finalización de curso activada', 2);
         }
 
+        // Activar mostrar condiciones de finalización si se solicita
+        if (optional_param('enableshowcompletionconditions', 0, PARAM_INT)) {
+            require_capability('moodle/course:update', $context);
+            $DB->set_field('course', 'showcompletionconditions', 1, ['id' => $COURSE->id]);
+            rebuild_course_cache($COURSE->id, true);
+            redirect(new moodle_url('/course/view.php', ['id' => $COURSE->id]), 'Mostrar condiciones de finalización activado', 2);
+        }
+
         // Activar mostrar fechas de actividad si se solicita
         if (optional_param('enableshowactivitydates', 0, PARAM_INT)) {
             require_capability('moodle/course:update', $context);
@@ -416,6 +424,10 @@ class block_validacursos extends block_base {
                 // Botón para activar finalización del curso
                 if ($val['nombre'] === 'Finalización de curso activada' && !$val['estado'] && $label === 'Estado' && has_capability('moodle/course:update', $context)) {
                     $html .= ' <button title="Activar finalización de curso" style="border:none;background:none;padding:0;margin-left:6px;cursor:pointer;" onclick="if(confirm(\'¿Quieres activar la finalización de curso?\')){window.location.href=\'?enablecompletion=1&id=' . $COURSE->id . '\';}"><span style="font-size:1.1em;color:#007bff;">&#9998;</span></button>';
+                }
+                // Botón para activar mostrar condiciones de finalización
+                if ($val['nombre'] === 'Mostrar condiciones de finalización de actividad' && !$val['estado'] && $label === 'Estado' && has_capability('moodle/course:update', $context)) {
+                    $html .= ' <button title="Activar mostrar condiciones de finalización" style="border:none;background:none;padding:0;margin-left:6px;cursor:pointer;" onclick="if(confirm(\'¿Quieres activar mostrar condiciones de finalización de actividad?\')){window.location.href=\'?enableshowcompletionconditions=1&id=' . $COURSE->id . '\';}"><span style="font-size:1.1em;color:#007bff;">&#9998;</span></button>';
                 }
                 // Botón para activar mostrar fechas de actividad
                 if ($val['nombre'] === 'Mostrar fechas de actividad' && !$val['estado'] && $label === 'Estado' && has_capability('moodle/course:update', $context)) {
