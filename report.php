@@ -31,6 +31,7 @@ require_capability('block/validacursos:viewissuesreport', $systemcontext);
 $download = optional_param('download', '', PARAM_ALPHA); // csv|excel
 $show = optional_param('show', 'open', PARAM_ALPHA);     // open|all
 $categoryid = optional_param('category', 0, PARAM_INT);
+$validation = optional_param('validation', '', PARAM_TEXT);
 
 // Categorías permitidas.
 $allowedcsv = trim((string)get_config('block_validacursos', 'allowedcategories'));
@@ -46,6 +47,9 @@ $PAGE->set_context($systemcontext);
 $pageparams = ['show' => $show];
 if ($categoryid) {
     $pageparams['category'] = $categoryid;
+}
+if ($validation !== '') {
+    $pageparams['validation'] = $validation;
 }
 $PAGE->set_url(new moodle_url('/blocks/validacursos/report.php', $pageparams));
 $PAGE->set_pagelayout('report');
@@ -93,6 +97,10 @@ if ($download === 'excel') {
         $params['categoryid'] = $categoryid;
     } else if (!empty($allowedids)) {
         $whereparts[] = 'c.category IN (' . implode(',', $allowedids) . ')';
+    }
+    if ($validation !== '') {
+        $whereparts[] = 'i.validation = :validation';
+        $params['validation'] = $validation;
     }
     $sql .= ' WHERE ' . ($whereparts ? implode(' AND ', $whereparts) : '1=1');
     $sql .= ' ORDER BY i.lastseen DESC';
@@ -187,6 +195,10 @@ if ($categoryid) {
 } else if (!empty($allowedids)) {
     $whereparts[] = 'c.category IN (' . implode(',', $allowedids) . ')';
 }
+if ($validation !== '') {
+    $whereparts[] = 'i.validation = :validation';
+    $params['validation'] = $validation;
+}
 $where = $whereparts ? implode(' AND ', $whereparts) : '1=1';
 
 $table->set_sql($fields, $from, $where, $params);
@@ -196,9 +208,10 @@ $table->set_count_sql("SELECT COUNT(1) FROM $from WHERE $where", $params);
 if (!$table->is_downloading()) {
     echo $OUTPUT->header();
 
-    // Pestañas conservando categoría.
-    $urlopen = new moodle_url('/blocks/validacursos/report.php', ['show' => 'open'] + ($categoryid ? ['category' => $categoryid] : []));
-    $urlall  = new moodle_url('/blocks/validacursos/report.php', ['show' => 'all'] + ($categoryid ? ['category' => $categoryid] : []));
+    // Pestañas conservando filtros.
+    $filterparams = ($categoryid ? ['category' => $categoryid] : []) + ($validation !== '' ? ['validation' => $validation] : []);
+    $urlopen = new moodle_url('/blocks/validacursos/report.php', ['show' => 'open'] + $filterparams);
+    $urlall  = new moodle_url('/blocks/validacursos/report.php', ['show' => 'all'] + $filterparams);
     echo html_writer::div(
         html_writer::link($urlopen, get_string('showopen', 'block_validacursos'), ['style' => $show !== 'open' ? '' : 'font-weight:bold'])
         . ' | ' .
@@ -206,15 +219,23 @@ if (!$table->is_downloading()) {
         'mb-2'
     );
 
-    // Filtro categoría: solo las permitidas en allowedcategories.
+    // Filtros: categoría y validación.
     $cats = core_course_category::make_categories_list();
     if (!empty($allowedids)) {
         $cats = array_intersect_key($cats, array_flip($allowedids));
+    }
+    $validationrows = $DB->get_records_sql("SELECT DISTINCT validation FROM {block_validacursos_issues} ORDER BY validation ASC");
+    $validationoptions = [];
+    foreach ($validationrows as $row) {
+        $validationoptions[$row->validation] = $row->validation;
     }
     echo html_writer::start_tag('form', ['method' => 'get', 'action' => $PAGE->url->out(false)]);
     echo html_writer::empty_tag('input', ['type' => 'hidden', 'name' => 'show', 'value' => $show]);
     echo html_writer::select(['0' => get_string('allcategories')] + $cats, 'category', $categoryid, null,
         ['onchange' => 'this.form.submit()']);
+    echo ' ';
+    echo html_writer::select(['' => get_string('allvalidations', 'block_validacursos')] + $validationoptions,
+        'validation', $validation, null, ['onchange' => 'this.form.submit()']);
     echo html_writer::end_tag('form');
 
     // ===== Estadísticas =====
@@ -229,6 +250,10 @@ if (!$table->is_downloading()) {
     } else if (!empty($allowedids)) {
         $joinall = ' JOIN {course} c ON c.id = i.courseid';
         $whereall .= ' AND c.category IN (' . implode(',', $allowedids) . ')';
+    }
+    if ($validation !== '') {
+        $whereall .= ' AND i.validation = :validation_all';
+        $paramsall['validation_all'] = $validation;
     }
     $countall = $DB->get_field_sql("SELECT COUNT(1)
                                       FROM {block_validacursos_issues} i $joinall
@@ -281,6 +306,10 @@ if (!$table->is_downloading()) {
     } else if (!empty($allowedids)) {
         $joinByVal = ' JOIN {course} c ON c.id = i.courseid';
         $whereByVal .= ' AND c.category IN (' . implode(',', $allowedids) . ')';
+    }
+    if ($validation !== '') {
+        $whereByVal .= ' AND i.validation = :validation_byval';
+        $paramsByVal['validation_byval'] = $validation;
     }
     $issuesByValidation = $DB->get_records_sql("
         SELECT i.validation, COUNT(1) AS total
@@ -347,6 +376,10 @@ if (!$table->is_downloading()) {
     } else if (!empty($allowedids)) {
         $topwhere .= ' AND c.category IN (' . implode(',', $allowedids) . ')';
     }
+    if ($validation !== '') {
+        $topwhere .= ' AND i.validation = :validation_top';
+        $topparams['validation_top'] = $validation;
+    }
     $topcourses = $DB->get_records_sql("
         SELECT i.courseid, c.fullname AS coursename, COUNT(1) AS issues
           FROM {block_validacursos_issues} i
@@ -382,9 +415,9 @@ if (!$table->is_downloading()) {
 
     // Botones de descarga.
     $csvurl = new moodle_url('/blocks/validacursos/report.php',
-        ['download' => 'csv', 'show' => $show] + ($categoryid ? ['category' => $categoryid] : []));
+        ['download' => 'csv', 'show' => $show] + $filterparams);
     $excelurl = new moodle_url('/blocks/validacursos/report.php',
-        ['download' => 'excel', 'show' => $show] + ($categoryid ? ['category' => $categoryid] : []));
+        ['download' => 'excel', 'show' => $show] + $filterparams);
     echo html_writer::div(
         html_writer::link($csvurl, get_string('downloadcsv', 'block_validacursos'), ['class' => 'btn btn-secondary mr-2'])
         . ' ' .

@@ -67,4 +67,5 @@ $string['courseswithissues'] = 'Courses with issues';
 $string['issuesbyvalidation'] = 'Open issues by validation type';
 $string['complianceoverview'] = 'Compliance overview';
 $string['downloadexcel'] = 'Download as Excel';
+$string['allvalidations'] = 'All validations';
 $string['downloadcsv'] = 'Download as CSV';
