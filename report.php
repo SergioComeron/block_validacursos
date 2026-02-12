@@ -32,6 +32,13 @@ $download = optional_param('download', '', PARAM_ALPHA); // csv|excel
 $show = optional_param('show', 'open', PARAM_ALPHA);     // open|all
 $categoryid = optional_param('category', 0, PARAM_INT);
 
+// Categorías permitidas.
+$allowedcsv = trim((string)get_config('block_validacursos', 'allowedcategories'));
+$allowedids = [];
+if ($allowedcsv !== '') {
+    $allowedids = array_filter(array_map('intval', explode(',', $allowedcsv)));
+}
+
 $pagetitle = get_string('issuesreport', 'block_validacursos');
 $PAGE->set_context($systemcontext);
 
@@ -44,16 +51,6 @@ $PAGE->set_url(new moodle_url('/blocks/validacursos/report.php', $pageparams));
 $PAGE->set_pagelayout('report');
 $PAGE->set_title($pagetitle);
 $PAGE->set_heading($pagetitle);
-
-// ===== Filtro SQL reutilizable (categoría) =====
-$catjoin = '';
-$catwhere = '1=1';
-$catparams = [];
-if ($categoryid) {
-    $catjoin = ' JOIN {course} c ON c.id = i.courseid';
-    $catwhere = 'c.category = :categoryid_f';
-    $catparams['categoryid_f'] = $categoryid;
-}
 
 // ===== Exportación Excel =====
 if ($download === 'excel') {
@@ -94,6 +91,8 @@ if ($download === 'excel') {
     if ($categoryid) {
         $whereparts[] = 'c.category = :categoryid';
         $params['categoryid'] = $categoryid;
+    } else if (!empty($allowedids)) {
+        $whereparts[] = 'c.category IN (' . implode(',', $allowedids) . ')';
     }
     $sql .= ' WHERE ' . ($whereparts ? implode(' AND ', $whereparts) : '1=1');
     $sql .= ' ORDER BY i.lastseen DESC';
@@ -185,6 +184,8 @@ if ($show !== 'all') {
 if ($categoryid) {
     $whereparts[] = 'c.category = :categoryid';
     $params['categoryid'] = $categoryid;
+} else if (!empty($allowedids)) {
+    $whereparts[] = 'c.category IN (' . implode(',', $allowedids) . ')';
 }
 $where = $whereparts ? implode(' AND ', $whereparts) : '1=1';
 
@@ -207,9 +208,7 @@ if (!$table->is_downloading()) {
 
     // Filtro categoría: solo las permitidas en allowedcategories.
     $cats = core_course_category::make_categories_list();
-    $allowedcsv = trim((string)get_config('block_validacursos', 'allowedcategories'));
-    if ($allowedcsv !== '') {
-        $allowedids = array_map('intval', explode(',', $allowedcsv));
+    if (!empty($allowedids)) {
         $cats = array_intersect_key($cats, array_flip($allowedids));
     }
     echo html_writer::start_tag('form', ['method' => 'get', 'action' => $PAGE->url->out(false)]);
@@ -227,6 +226,9 @@ if (!$table->is_downloading()) {
         $joinall = ' JOIN {course} c ON c.id = i.courseid';
         $whereall .= ' AND c.category = :categoryid_all';
         $paramsall['categoryid_all'] = $categoryid;
+    } else if (!empty($allowedids)) {
+        $joinall = ' JOIN {course} c ON c.id = i.courseid';
+        $whereall .= ' AND c.category IN (' . implode(',', $allowedids) . ')';
     }
     $countall = $DB->get_field_sql("SELECT COUNT(1)
                                       FROM {block_validacursos_issues} i $joinall
@@ -276,6 +278,9 @@ if (!$table->is_downloading()) {
         $joinByVal = ' JOIN {course} c ON c.id = i.courseid';
         $whereByVal .= ' AND c.category = :categoryid_byval';
         $paramsByVal['categoryid_byval'] = $categoryid;
+    } else if (!empty($allowedids)) {
+        $joinByVal = ' JOIN {course} c ON c.id = i.courseid';
+        $whereByVal .= ' AND c.category IN (' . implode(',', $allowedids) . ')';
     }
     $issuesByValidation = $DB->get_records_sql("
         SELECT i.validation, COUNT(1) AS total
@@ -339,6 +344,8 @@ if (!$table->is_downloading()) {
     if ($categoryid) {
         $topwhere .= ' AND c.category = :categoryid_top';
         $topparams['categoryid_top'] = $categoryid;
+    } else if (!empty($allowedids)) {
+        $topwhere .= ' AND c.category IN (' . implode(',', $allowedids) . ')';
     }
     $topcourses = $DB->get_records_sql("
         SELECT i.courseid, c.fullname AS coursename, COUNT(1) AS issues
