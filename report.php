@@ -205,8 +205,13 @@ if (!$table->is_downloading()) {
         'mb-2'
     );
 
-    // Filtro categoría.
+    // Filtro categoría: solo las permitidas en allowedcategories.
     $cats = core_course_category::make_categories_list();
+    $allowedcsv = trim((string)get_config('block_validacursos', 'allowedcategories'));
+    if ($allowedcsv !== '') {
+        $allowedids = array_map('intval', explode(',', $allowedcsv));
+        $cats = array_intersect_key($cats, array_flip($allowedids));
+    }
     echo html_writer::start_tag('form', ['method' => 'get', 'action' => $PAGE->url->out(false)]);
     echo html_writer::empty_tag('input', ['type' => 'hidden', 'name' => 'show', 'value' => $show]);
     echo html_writer::select(['0' => get_string('allcategories')] + $cats, 'category', $categoryid, null,
