@@ -334,17 +334,20 @@ class validator {
         $grade_categories = $DB->get_records('grade_categories', ['courseid' => $course->id]);
         foreach ($grade_categories as $cat) {
             $nombre = trim($cat->fullname);
+            // Eliminar contenido entre paréntesis para comparación flexible.
+            // Ej: "Actividades de Aprendizaje (AA)" → "Actividades de Aprendizaje".
+            $nombrebase = trim(preg_replace('/\s*\(.*?\)\s*/', ' ', $nombre));
 
             // Quitar de la lista de faltantes con comparación insensible a mayúsculas y tildes.
             foreach ($faltan_categorias as $i => $req) {
-                if (self::normalizar_para_comparar($nombre) === self::normalizar_para_comparar($req)) {
+                if (self::normalizar_para_comparar($nombrebase) === self::normalizar_para_comparar($req)) {
                     unset($faltan_categorias[$i]);
                     break;
                 }
             }
 
             // Guardar el peso de "Actividades no evaluables" (insensible a mayúsculas y tildes).
-            if (self::normalizar_para_comparar($nombre) === self::normalizar_para_comparar('Actividades no evaluables')) {
+            if (self::normalizar_para_comparar($nombrebase) === self::normalizar_para_comparar('Actividades no evaluables')) {
                 // Buscar el grade_item asociado a la categoría
                 $gradeitem = $DB->get_record('grade_items', [
                     'itemtype' => 'category',
@@ -493,7 +496,8 @@ class validator {
             // Obtener el ID de la categoría "Actividades no evaluables" para excluirla.
             $cat_no_evaluables_id = null;
             foreach ($grade_categories as $cat) {
-                if (self::normalizar_para_comparar($cat->fullname) === self::normalizar_para_comparar('Actividades no evaluables')) {
+                $catnombrebase = trim(preg_replace('/\s*\(.*?\)\s*/', ' ', $cat->fullname));
+                if (self::normalizar_para_comparar($catnombrebase) === self::normalizar_para_comparar('Actividades no evaluables')) {
                     $cat_no_evaluables_id = $cat->id;
                     break;
                 }
@@ -564,6 +568,21 @@ class validator {
                 'Estado' => $showactivitydates
                     ? 'Activada'
                     : 'Desactivada. Activar en ajustes del curso > Apariencia.',
+            ]
+        ];
+
+        // Validación: el curso debe estar oculto (no visible para estudiantes).
+        $coursehidden = empty($course->visible);
+        $validaciones[] = [
+            'nombre' => 'Curso oculto',
+            'estado' => $coursehidden,
+            'mensaje' => $coursehidden
+                ? 'El curso está oculto'
+                : 'El curso NO está oculto',
+            'detalle' => [
+                'Estado' => $coursehidden
+                    ? 'Oculto'
+                    : 'Visible. El curso debería estar oculto para los estudiantes.',
             ]
         ];
 

@@ -55,7 +55,8 @@ class issues_table extends \table_sql {
 
     public function col_course($row) {
         $url = new \moodle_url('/course/view.php', ['id' => $row->courseid]);
-        return \html_writer::link($url, \format_string($row->coursename));
+        $attrs = empty($row->coursevisible) ? ['class' => 'dimmed_text'] : [];
+        return \html_writer::link($url, \format_string($row->coursename), $attrs);
     }
 
     public function col_state($row) {

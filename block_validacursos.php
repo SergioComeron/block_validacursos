@@ -341,6 +341,14 @@ class block_validacursos extends block_base {
             redirect(new moodle_url('/course/view.php', ['id' => $COURSE->id]), 'Mostrar fechas de actividad activado', 2);
         }
 
+        // Ocultar curso si se solicita
+        if (optional_param('hidecourse', 0, PARAM_INT)) {
+            require_capability('moodle/course:visibility', $context);
+            $DB->set_field('course', 'visible', 0, ['id' => $COURSE->id]);
+            rebuild_course_cache($COURSE->id, true);
+            redirect(new moodle_url('/course/view.php', ['id' => $COURSE->id]), 'Curso ocultado', 2);
+        }
+
         // Cambiar tipo de foro si se solicita
         $changeforumtype_id = optional_param('changeforumtype', 0, PARAM_INT);
         if ($changeforumtype_id) {
@@ -432,6 +440,10 @@ class block_validacursos extends block_base {
                 // Botón para activar mostrar fechas de actividad
                 if ($val['nombre'] === 'Mostrar fechas de actividad' && !$val['estado'] && $label === 'Estado' && has_capability('moodle/course:update', $context)) {
                     $html .= ' <button title="Activar mostrar fechas de actividad" style="border:none;background:none;padding:0;margin-left:6px;cursor:pointer;" onclick="if(confirm(\'¿Quieres activar mostrar fechas de actividad?\')){window.location.href=\'?enableshowactivitydates=1&id=' . $COURSE->id . '\';}"><span style="font-size:1.1em;color:#007bff;">&#9998;</span></button>';
+                }
+                // Botón para ocultar el curso
+                if ($val['nombre'] === 'Curso oculto' && !$val['estado'] && $label === 'Estado' && has_capability('moodle/course:visibility', $context)) {
+                    $html .= ' <button title="Ocultar curso" style="border:none;background:none;padding:0;margin-left:6px;cursor:pointer;" onclick="if(confirm(\'¿Quieres ocultar este curso?\')){window.location.href=\'?hidecourse=1&id=' . $COURSE->id . '\';}"><span style="font-size:1.1em;color:#007bff;">&#9998;</span></button>';
                 }
                 // Botones para crear categorías del calificador si faltan
                 if ($val['nombre'] === 'Categorías del calificador' && !$val['estado'] && $label === 'Faltan' && $valor !== '-') {

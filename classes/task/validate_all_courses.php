@@ -53,7 +53,7 @@ class validate_all_courses extends \core\task\scheduled_task {
         }
 
         // Fetch visible courses using a recordset for memory efficiency.
-        $rs = $DB->get_recordset('course', ['visible' => 1], 'id ASC');
+        $rs = $DB->get_recordset('course', [], 'id ASC');
 
         $processed = 0;
         $errors = 0;

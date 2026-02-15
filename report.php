@@ -32,6 +32,8 @@ $download = optional_param('download', '', PARAM_ALPHA); // csv|excel
 $show = optional_param('show', 'open', PARAM_ALPHA);     // open|all
 $categoryid = optional_param('category', 0, PARAM_INT);
 $validation = optional_param('validation', '', PARAM_TEXT);
+$tab = optional_param('tab', 'top', PARAM_ALPHA);        // top|issues|validations
+$page = optional_param('page', 0, PARAM_INT);
 
 // Categorías permitidas.
 $allowedcsv = trim((string)get_config('block_validacursos', 'allowedcategories'));
@@ -44,7 +46,7 @@ $pagetitle = get_string('issuesreport', 'block_validacursos');
 $PAGE->set_context($systemcontext);
 
 // Construimos URL incluyendo filtros activos.
-$pageparams = ['show' => $show];
+$pageparams = ['show' => $show, 'tab' => $tab];
 if ($categoryid) {
     $pageparams['category'] = $categoryid;
 }
@@ -56,103 +58,95 @@ $PAGE->set_pagelayout('report');
 $PAGE->set_title($pagetitle);
 $PAGE->set_heading($pagetitle);
 
-// ===== Exportación Excel =====
-if ($download === 'excel') {
-    global $CFG;
-    require_once($CFG->libdir . '/excellib.class.php');
-
-    $contextcourselevel = CONTEXT_COURSE;
-    $dbfamily = $DB->get_dbfamily();
-    if ($dbfamily === 'postgres') {
-        $teacherselect = "(SELECT string_agg(COALESCE(u.firstname,'') || ' ' || COALESCE(u.lastname,''), ', ' ORDER BY u.lastname, u.firstname)
-                             FROM {role_assignments} ra
-                             JOIN {context} ctx ON ctx.id = ra.contextid
-                             JOIN {role} r ON r.id = ra.roleid
-                             JOIN {user} u ON u.id = ra.userid
-                            WHERE ctx.contextlevel = :ctxlevel AND ctx.instanceid = i.courseid
-                              AND r.archetype IN ('editingteacher','teacher') AND u.deleted = 0)";
-    } else {
-        $teacherselect = "(SELECT GROUP_CONCAT(CONCAT(u.firstname, ' ', u.lastname) ORDER BY u.lastname SEPARATOR ', ')
-                             FROM {role_assignments} ra
-                             JOIN {context} ctx ON ctx.id = ra.contextid
-                             JOIN {role} r ON r.id = ra.roleid
-                             JOIN {user} u ON u.id = ra.userid
-                            WHERE ctx.contextlevel = :ctxlevel AND ctx.instanceid = i.courseid
-                              AND r.archetype IN ('editingteacher','teacher') AND u.deleted = 0)";
-    }
-
-    $sql = "SELECT i.id, i.courseid, c.shortname, c.fullname, cc.name AS categoryname,
-                   i.validation, i.firstseen, i.lastseen, i.resolvedat, $teacherselect AS teachers
-              FROM {block_validacursos_issues} i
-              JOIN {course} c ON c.id = i.courseid
-              JOIN {course_categories} cc ON cc.id = c.category";
-
-    $whereparts = [];
-    $params = ['ctxlevel' => $contextcourselevel];
-    if ($show !== 'all') {
-        $whereparts[] = 'i.resolvedat IS NULL';
-    }
+// ===== Exportación pestaña ok (dataformat estándar Moodle) =====
+if ($tab === 'ok' && $download !== '') {
+    $okparams = [];
+    $okwhere = 'c.id != ' . SITEID;
     if ($categoryid) {
-        $whereparts[] = 'c.category = :categoryid';
-        $params['categoryid'] = $categoryid;
+        $okwhere .= ' AND c.category = :categoryid_ok';
+        $okparams['categoryid_ok'] = $categoryid;
     } else if (!empty($allowedids)) {
-        $whereparts[] = 'c.category IN (' . implode(',', $allowedids) . ')';
+        $okwhere .= ' AND c.category IN (' . implode(',', $allowedids) . ')';
     }
-    if ($validation !== '') {
-        $whereparts[] = 'i.validation = :validation';
-        $params['validation'] = $validation;
-    }
-    $sql .= ' WHERE ' . ($whereparts ? implode(' AND ', $whereparts) : '1=1');
-    $sql .= ' ORDER BY i.lastseen DESC';
+    $records = $DB->get_records_sql("
+        SELECT c.id AS courseid, c.shortname, c.fullname AS coursename
+          FROM {course} c
+         WHERE $okwhere
+           AND c.id NOT IN (
+               SELECT DISTINCT i.courseid
+                 FROM {block_validacursos_issues} i
+                WHERE i.resolvedat IS NULL
+           )
+      ORDER BY c.fullname ASC
+    ", $okparams);
 
-    $records = $DB->get_records_sql($sql, $params);
+    $columns = [
+        'courseid' => get_string('courseid', 'block_validacursos'),
+        'shortname' => get_string('shortname'),
+        'coursename' => get_string('course'),
+    ];
 
-    $workbook = new MoodleExcelWorkbook('-');
-    $workbook->send('validacursos_issues.xlsx');
-    $worksheet = $workbook->add_worksheet(get_string('issuesreport', 'block_validacursos'));
-
-    $headerformat = $workbook->add_format();
-    $headerformat->set_bold(1);
-    $headerformat->set_bg_color('#CCCCCC');
-    $headerformat->set_align('center');
-
-    $headers = ['ID', 'Course ID', 'Short name', 'Course', 'Category',
-                'Validation', 'First seen', 'Last seen', 'Resolved at', 'Teachers'];
-    foreach ($headers as $col => $header) {
-        $worksheet->write(0, $col, $header, $headerformat);
-    }
-
-    $row = 1;
-    foreach ($records as $rec) {
-        $worksheet->write($row, 0, $rec->id);
-        $worksheet->write($row, 1, $rec->courseid);
-        $worksheet->write($row, 2, $rec->shortname);
-        $worksheet->write($row, 3, $rec->fullname);
-        $worksheet->write($row, 4, $rec->categoryname);
-        $worksheet->write($row, 5, $rec->validation);
-        $worksheet->write($row, 6, $rec->firstseen ? userdate($rec->firstseen) : '-');
-        $worksheet->write($row, 7, $rec->lastseen ? userdate($rec->lastseen) : '-');
-        $worksheet->write($row, 8, $rec->resolvedat ? userdate($rec->resolvedat) : '-');
-        $worksheet->write($row, 9, $rec->teachers ?? '');
-        $row++;
-    }
-
-    $worksheet->set_column(0, 1, 10);
-    $worksheet->set_column(2, 2, 15);
-    $worksheet->set_column(3, 3, 30);
-    $worksheet->set_column(4, 4, 20);
-    $worksheet->set_column(5, 5, 40);
-    $worksheet->set_column(6, 8, 20);
-    $worksheet->set_column(9, 9, 30);
-
-    $workbook->close();
+    \core\dataformat::download_data('courses_without_issues', $download, $columns, $records, function($rec) {
+        return [
+            'courseid' => $rec->courseid,
+            'shortname' => $rec->shortname,
+            'coursename' => $rec->coursename,
+        ];
+    });
     die();
 }
 
-// ===== Tabla SQL (CSV + HTML) =====
+// ===== Exportación pestaña issues (dataformat estándar Moodle) =====
+if ($tab === 'issues' && $download !== '') {
+    $issuescoursesparams = [];
+    $issuescourseswhere = 'i.resolvedat IS NULL';
+    $issuescoursesjoin = '';
+    if ($categoryid) {
+        $issuescoursesjoin = ' JOIN {course_categories} cc ON cc.id = c.category';
+        $issuescourseswhere .= ' AND c.category = :categoryid_ic';
+        $issuescoursesparams['categoryid_ic'] = $categoryid;
+    } else if (!empty($allowedids)) {
+        $issuescoursesjoin = ' JOIN {course_categories} cc ON cc.id = c.category';
+        $issuescourseswhere .= ' AND c.category IN (' . implode(',', $allowedids) . ')';
+    }
+    if ($validation !== '') {
+        $issuescourseswhere .= ' AND i.validation = :validation_ic';
+        $issuescoursesparams['validation_ic'] = $validation;
+    }
+    $records = $DB->get_records_sql("
+        SELECT i.courseid, c.shortname, c.fullname AS coursename, COUNT(1) AS issues
+          FROM {block_validacursos_issues} i
+          JOIN {course} c ON c.id = i.courseid
+          $issuescoursesjoin
+         WHERE $issuescourseswhere
+      GROUP BY i.courseid, c.shortname, c.fullname
+      ORDER BY issues DESC, c.fullname ASC
+    ", $issuescoursesparams);
+
+    $columns = [
+        'courseid' => get_string('courseid', 'block_validacursos'),
+        'shortname' => get_string('shortname'),
+        'coursename' => get_string('course'),
+        'issues' => get_string('issues', 'block_validacursos'),
+    ];
+
+    \core\dataformat::download_data('courses_with_issues', $download, $columns, $records, function($rec) {
+        return [
+            'courseid' => $rec->courseid,
+            'shortname' => $rec->shortname,
+            'coursename' => $rec->coursename,
+            'issues' => (int)$rec->issues,
+        ];
+    });
+    die();
+}
+
+// ===== Tabla SQL (con descarga integrada) =====
 $uniqueid = 'block_validacursos_issues';
 $table = new \block_validacursos\output\issues_table($uniqueid);
-$table->is_downloading($download === 'csv' ? 'csv' : '', 'validacursos_issues', 'validacursos_issues');
+$validationsdownload = ($tab === 'validations' && $download !== '') ? $download : '';
+$table->is_downloading($validationsdownload, 'validacursos_issues', 'validacursos_issues');
+$table->show_download_buttons_at([TABLE_P_BOTTOM]);
 $table->define_baseurl($PAGE->url);
 
 $contextcourselevel = CONTEXT_COURSE;
@@ -175,7 +169,7 @@ if ($dbfamily === 'postgres') {
                           AND r.archetype IN ('editingteacher','teacher') AND u.deleted = 0)";
 }
 
-$fields = 'i.id, i.courseid, c.shortname AS courseshortname, c.fullname AS coursename, ' .
+$fields = 'i.id, i.courseid, c.shortname AS courseshortname, c.fullname AS coursename, c.visible AS coursevisible, ' .
           'cc.name AS categoryname, ' .
           'i.validation, i.firstseen, i.lastseen, i.resolvedat, ' . $teacherselect . ' AS teachers';
 
@@ -265,10 +259,16 @@ if (!$table->is_downloading()) {
                                        FROM {block_validacursos_issues} i $joinall
                                       WHERE $whereopen", $paramsopen);
 
-    // Total de aulas (cursos distintos) validadas.
-    $totalcourses = $DB->get_field_sql("SELECT COUNT(DISTINCT i.courseid)
-                                          FROM {block_validacursos_issues} i $joinall
-                                         WHERE $whereall", $paramsall);
+    // Total real de cursos en las categorías permitidas.
+    $totalcoursesparams = [];
+    $totalcourseswhere = 'c.id != ' . SITEID;
+    if ($categoryid) {
+        $totalcourseswhere .= ' AND c.category = :categoryid_total';
+        $totalcoursesparams['categoryid_total'] = $categoryid;
+    } else if (!empty($allowedids)) {
+        $totalcourseswhere .= ' AND c.category IN (' . implode(',', $allowedids) . ')';
+    }
+    $totalcourses = $DB->get_field_sql("SELECT COUNT(1) FROM {course} c WHERE $totalcourseswhere", $totalcoursesparams);
 
     // Cursos con al menos una incidencia abierta.
     $courseswithissues = $DB->get_field_sql("SELECT COUNT(DISTINCT i.courseid)
@@ -319,7 +319,7 @@ if (!$table->is_downloading()) {
       ORDER BY total DESC
     ", $paramsByVal);
 
-    echo html_writer::start_div('', ['style' => 'display:flex; flex-wrap:wrap; gap:2rem; margin-bottom:1.5rem; max-width:900px;']);
+    echo html_writer::start_div('', ['style' => 'display:flex; flex-wrap:wrap; gap:2rem; margin-bottom:1.5rem; max-width:1000px; align-items:flex-start;']);
 
     // Gráfico de barras: incidencias por validación.
     if ($issuesByValidation) {
@@ -362,72 +362,225 @@ if (!$table->is_downloading()) {
             get_string('courseswithissues', 'block_validacursos') . ' (' . (int)$courseswithissues . ')',
         ]);
 
-        echo html_writer::div($OUTPUT->render($piechart), '', ['style' => 'flex:1; min-width:200px; max-width:350px;']);
+        echo html_writer::div($OUTPUT->render($piechart), '', ['style' => 'flex:0 1 auto; min-width:150px; max-width:250px;']);
     }
 
     echo html_writer::end_div();
 
-    // Top cursos con más incidencias abiertas.
-    $topparams = [];
-    $topwhere = '1=1 AND i.resolvedat IS NULL';
-    if ($categoryid) {
-        $topwhere .= ' AND c.category = :categoryid_top';
-        $topparams['categoryid_top'] = $categoryid;
-    } else if (!empty($allowedids)) {
-        $topwhere .= ' AND c.category IN (' . implode(',', $allowedids) . ')';
-    }
-    if ($validation !== '') {
-        $topwhere .= ' AND i.validation = :validation_top';
-        $topparams['validation_top'] = $validation;
-    }
-    $topcourses = $DB->get_records_sql("
-        SELECT i.courseid, c.fullname AS coursename, COUNT(1) AS issues
-          FROM {block_validacursos_issues} i
-          JOIN {course} c ON c.id = i.courseid
-         WHERE $topwhere
-      GROUP BY i.courseid, c.fullname
-      ORDER BY issues DESC, c.fullname ASC
-         LIMIT 10
-    ", $topparams);
+    // ===== Pestañas =====
+    $tabparams = $filterparams + ['show' => $show];
+    $urltop = new moodle_url('/blocks/validacursos/report.php', ['tab' => 'top'] + $tabparams);
+    $urlissues = new moodle_url('/blocks/validacursos/report.php', ['tab' => 'issues'] + $tabparams);
+    $urlok = new moodle_url('/blocks/validacursos/report.php', ['tab' => 'ok'] + $tabparams);
+    $urlvalidations = new moodle_url('/blocks/validacursos/report.php', ['tab' => 'validations'] + $tabparams);
 
-    if ($topcourses) {
-        $rows = [];
-        foreach ($topcourses as $tc) {
-            $courseurl = new moodle_url('/course/view.php', ['id' => $tc->courseid]);
-            $rows[] = html_writer::tag('tr',
-                html_writer::tag('td', html_writer::link($courseurl, format_string($tc->coursename))) .
-                html_writer::tag('td', (int)$tc->issues, ['style' => 'text-align:right'])
-            );
+    echo '<ul class="nav nav-tabs mb-3" role="tablist">';
+    echo '<li class="nav-item"><a class="nav-link' . ($tab === 'top' ? ' active' : '') . '" href="' . $urltop . '">'
+        . get_string('tabtopcoursesopen', 'block_validacursos') . '</a></li>';
+    echo '<li class="nav-item"><a class="nav-link' . ($tab === 'issues' ? ' active' : '') . '" href="' . $urlissues . '">'
+        . get_string('tabcourseswithissues', 'block_validacursos') . '</a></li>';
+    echo '<li class="nav-item"><a class="nav-link' . ($tab === 'ok' ? ' active' : '') . '" href="' . $urlok . '">'
+        . get_string('tabcoursesok', 'block_validacursos') . '</a></li>';
+    echo '<li class="nav-item"><a class="nav-link' . ($tab === 'validations' ? ' active' : '') . '" href="' . $urlvalidations . '">'
+        . get_string('tabvalidations', 'block_validacursos') . '</a></li>';
+    echo '</ul>';
+
+    if ($tab === 'top') {
+        // Top cursos con más incidencias abiertas.
+        $topparams = [];
+        $topwhere = '1=1 AND i.resolvedat IS NULL';
+        if ($categoryid) {
+            $topwhere .= ' AND c.category = :categoryid_top';
+            $topparams['categoryid_top'] = $categoryid;
+        } else if (!empty($allowedids)) {
+            $topwhere .= ' AND c.category IN (' . implode(',', $allowedids) . ')';
         }
-        $tablehtml = html_writer::tag('table',
-            html_writer::tag('thead', html_writer::tag('tr',
-                html_writer::tag('th', get_string('course')) .
-                html_writer::tag('th', get_string('issues', 'block_validacursos'), ['style' => 'text-align:right'])
-            )) .
-            html_writer::tag('tbody', implode('', $rows)),
-            ['class' => 'generaltable boxaligncenter', 'style' => 'margin-top: .5rem;']
-        );
-        echo html_writer::tag('div',
-            html_writer::tag('h3', get_string('topcoursesopen', 'block_validacursos')) . $tablehtml,
-            ['class' => 'box generalbox mb-3']
-        );
-    }
+        if ($validation !== '') {
+            $topwhere .= ' AND i.validation = :validation_top';
+            $topparams['validation_top'] = $validation;
+        }
+        $topcourses = $DB->get_records_sql("
+            SELECT i.courseid, c.fullname AS coursename, COUNT(1) AS issues
+              FROM {block_validacursos_issues} i
+              JOIN {course} c ON c.id = i.courseid
+             WHERE $topwhere
+          GROUP BY i.courseid, c.fullname
+          ORDER BY issues DESC, c.fullname ASC
+             LIMIT 10
+        ", $topparams);
 
-    // Botones de descarga.
-    $csvurl = new moodle_url('/blocks/validacursos/report.php',
-        ['download' => 'csv', 'show' => $show] + $filterparams);
-    $excelurl = new moodle_url('/blocks/validacursos/report.php',
-        ['download' => 'excel', 'show' => $show] + $filterparams);
-    echo html_writer::div(
-        html_writer::link($csvurl, get_string('downloadcsv', 'block_validacursos'), ['class' => 'btn btn-secondary mr-2'])
-        . ' ' .
-        html_writer::link($excelurl, get_string('downloadexcel', 'block_validacursos'), ['class' => 'btn btn-secondary']),
-        'mb-3'
-    );
+        if ($topcourses) {
+            $rows = [];
+            foreach ($topcourses as $tc) {
+                $courseurl = new moodle_url('/course/view.php', ['id' => $tc->courseid]);
+                $rows[] = html_writer::tag('tr',
+                    html_writer::tag('td', html_writer::link($courseurl, format_string($tc->coursename))) .
+                    html_writer::tag('td', (int)$tc->issues, ['style' => 'text-align:right'])
+                );
+            }
+            $tablehtml = html_writer::tag('table',
+                html_writer::tag('thead', html_writer::tag('tr',
+                    html_writer::tag('th', get_string('course')) .
+                    html_writer::tag('th', get_string('issues', 'block_validacursos'), ['style' => 'text-align:right'])
+                )) .
+                html_writer::tag('tbody', implode('', $rows)),
+                ['class' => 'generaltable boxaligncenter', 'style' => 'margin-top: .5rem;']
+            );
+            echo html_writer::tag('div', $tablehtml, ['class' => 'box generalbox mb-3']);
+        } else {
+            echo html_writer::div(get_string('coursesnoissues', 'block_validacursos'), 'alert alert-success');
+        }
+
+    } else if ($tab === 'issues') {
+        // Selector de descarga estándar Moodle.
+        $downloadurl = new moodle_url('/blocks/validacursos/report.php',
+            ['tab' => 'issues', 'show' => $show] + $filterparams);
+        echo $OUTPUT->download_dataformat_selector(
+            get_string('downloadas', 'table'),
+            $downloadurl,
+            'download'
+        );
+
+        // Cursos con incidencias abiertas (listado paginado).
+        $perpage = 50;
+        $issuescoursesparams = [];
+        $issuescourseswhere = 'i.resolvedat IS NULL';
+        $issuescoursesjoin = '';
+        if ($categoryid) {
+            $issuescoursesjoin = ' JOIN {course_categories} cc ON cc.id = c.category';
+            $issuescourseswhere .= ' AND c.category = :categoryid_ic';
+            $issuescoursesparams['categoryid_ic'] = $categoryid;
+        } else if (!empty($allowedids)) {
+            $issuescoursesjoin = ' JOIN {course_categories} cc ON cc.id = c.category';
+            $issuescourseswhere .= ' AND c.category IN (' . implode(',', $allowedids) . ')';
+        }
+        if ($validation !== '') {
+            $issuescourseswhere .= ' AND i.validation = :validation_ic';
+            $issuescoursesparams['validation_ic'] = $validation;
+        }
+
+        $totalcoursesWithIssues = $DB->get_field_sql("
+            SELECT COUNT(1) FROM (
+                SELECT i.courseid
+                  FROM {block_validacursos_issues} i
+                  JOIN {course} c ON c.id = i.courseid
+                  $issuescoursesjoin
+                 WHERE $issuescourseswhere
+              GROUP BY i.courseid
+            ) subq
+        ", $issuescoursesparams);
+
+        $courseswithissueslist = $DB->get_records_sql("
+            SELECT i.courseid, c.fullname AS coursename, c.visible, COUNT(1) AS issues
+              FROM {block_validacursos_issues} i
+              JOIN {course} c ON c.id = i.courseid
+              $issuescoursesjoin
+             WHERE $issuescourseswhere
+          GROUP BY i.courseid, c.fullname, c.visible
+          ORDER BY issues DESC, c.fullname ASC
+        ", $issuescoursesparams, $page * $perpage, $perpage);
+
+        if ($courseswithissueslist) {
+            $rows = [];
+            foreach ($courseswithissueslist as $cw) {
+                $courseurl = new moodle_url('/course/view.php', ['id' => $cw->courseid]);
+                $attrs = empty($cw->visible) ? ['class' => 'dimmed_text'] : [];
+                $rows[] = html_writer::tag('tr',
+                    html_writer::tag('td', html_writer::link($courseurl, format_string($cw->coursename), $attrs)) .
+                    html_writer::tag('td', (int)$cw->issues, ['style' => 'text-align:right'])
+                );
+            }
+            $tablehtml = html_writer::tag('table',
+                html_writer::tag('thead', html_writer::tag('tr',
+                    html_writer::tag('th', get_string('course')) .
+                    html_writer::tag('th', get_string('issues', 'block_validacursos'), ['style' => 'text-align:right'])
+                )) .
+                html_writer::tag('tbody', implode('', $rows)),
+                ['class' => 'generaltable boxaligncenter', 'style' => 'margin-top: .5rem;']
+            );
+            echo html_writer::tag('div', $tablehtml, ['class' => 'box generalbox mb-3']);
+            $pagingurl = new moodle_url('/blocks/validacursos/report.php', $tabparams + ['tab' => 'issues']);
+            echo $OUTPUT->paging_bar($totalcoursesWithIssues, $page, $perpage, $pagingurl);
+        } else {
+            echo html_writer::div(get_string('coursesnoissues', 'block_validacursos'), 'alert alert-success');
+        }
+
+    } else if ($tab === 'ok') {
+        // Selector de descarga estándar Moodle.
+        $downloadurlok = new moodle_url('/blocks/validacursos/report.php',
+            ['tab' => 'ok', 'show' => $show] + $filterparams);
+        echo $OUTPUT->download_dataformat_selector(
+            get_string('downloadas', 'table'),
+            $downloadurlok,
+            'download'
+        );
+
+        // Cursos sin incidencias abiertas (listado paginado).
+        $perpage = 50;
+        $okparams = [];
+        $okwhere = 'c.id != ' . SITEID;
+        if ($categoryid) {
+            $okwhere .= ' AND c.category = :categoryid_ok';
+            $okparams['categoryid_ok'] = $categoryid;
+        } else if (!empty($allowedids)) {
+            $okwhere .= ' AND c.category IN (' . implode(',', $allowedids) . ')';
+        }
+
+        $totalcoursesok = $DB->get_field_sql("
+            SELECT COUNT(1)
+              FROM {course} c
+             WHERE $okwhere
+               AND c.id NOT IN (
+                   SELECT DISTINCT i.courseid
+                     FROM {block_validacursos_issues} i
+                    WHERE i.resolvedat IS NULL
+               )
+        ", $okparams);
+
+        $coursesok = $DB->get_records_sql("
+            SELECT c.id AS courseid, c.fullname AS coursename, c.visible
+              FROM {course} c
+             WHERE $okwhere
+               AND c.id NOT IN (
+                   SELECT DISTINCT i.courseid
+                     FROM {block_validacursos_issues} i
+                    WHERE i.resolvedat IS NULL
+               )
+          ORDER BY c.fullname ASC
+        ", $okparams, $page * $perpage, $perpage);
+
+        if ($coursesok) {
+            $rows = [];
+            foreach ($coursesok as $co) {
+                $courseurl = new moodle_url('/course/view.php', ['id' => $co->courseid]);
+                $attrs = empty($co->visible) ? ['class' => 'dimmed_text'] : [];
+                $rows[] = html_writer::tag('tr',
+                    html_writer::tag('td', html_writer::link($courseurl, format_string($co->coursename), $attrs))
+                );
+            }
+            $tablehtml = html_writer::tag('table',
+                html_writer::tag('thead', html_writer::tag('tr',
+                    html_writer::tag('th', get_string('course'))
+                )) .
+                html_writer::tag('tbody', implode('', $rows)),
+                ['class' => 'generaltable boxaligncenter', 'style' => 'margin-top: .5rem;']
+            );
+            echo html_writer::tag('div', $tablehtml, ['class' => 'box generalbox mb-3']);
+            $pagingurlok = new moodle_url('/blocks/validacursos/report.php', $tabparams + ['tab' => 'ok']);
+            echo $OUTPUT->paging_bar($totalcoursesok, $page, $perpage, $pagingurlok);
+        } else {
+            echo html_writer::div(get_string('nocoursesok', 'block_validacursos'), 'alert alert-warning');
+        }
+
+    } else if ($tab === 'validations') {
+        // La tabla SQL muestra su propio selector de descarga.
+    }
 }
 
-// Tabla paginada (o CSV si download=csv).
-$table->out(50, true);
+// Tabla paginada (o CSV si download=csv) — solo en pestaña validations.
+if ($tab === 'validations' || $table->is_downloading()) {
+    $table->out(50, true);
+}
 
 if (!$table->is_downloading()) {
     echo $OUTPUT->footer();
