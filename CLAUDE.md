@@ -33,7 +33,7 @@ No hay tests automatizados, ni linter configurado, ni sistema de build propio. P
 - **`classes/local/validator.php`** — Motor de validación. Contiene toda la lógica de las reglas. Métodos estáticos auxiliares: `normalizar_texto()` para limpiar HTML, `quitar_tildes()` para eliminar diacríticos Unicode (NFD + `\pM`), `normalizar_para_comparar()` para comparación insensible a mayúsculas y tildes, `label_contiene_frase_relajada()` para matching flexible de texto, `existe_label_con_tabla_y_frase()` para buscar labels con tablas HTML.
 - **`classes/task/validate_all_courses.php`** — Tarea programada que valida todos los cursos de las categorías permitidas (tanto visibles como ocultos). Se ejecuta diariamente a las 2 AM.
 - **`classes/local/logger.php`** — Persistencia en BD. Crea incidencias nuevas, actualiza `lastseen` en incidencias abiertas, y marca como resueltas cuando la validación pasa.
-- **`report.php`** — Página de reporte admin con pestañas (abiertas/todas), filtro por categoría y tipo de validación, estadísticas (total issues, open, aulas validadas, % cumplimiento), gráficos Chart.js (barras por validación, donut de cumplimiento), tabla paginada y exportación CSV/Excel. Los cursos ocultos se muestran con clase `dimmed_text` (gris). Usa SQL diferenciado para PostgreSQL y MySQL.
+- **`report.php`** — Página de reporte admin con pestañas de contenido (top/issues/ok/validations), filtros por categoría, tipo de validación y semestre (detecta "Segundo" y "-2S-" en fullname), estadísticas (total issues, open, aulas validadas, % cumplimiento), gráficos Chart.js (barras por validación, donut de cumplimiento). Pestaña issues paginada (50/pág) ordenada por nº incidencias. Pestaña ok muestra cursos sin incidencias. Descarga con `download_dataformat_selector` estándar de Moodle en issues/ok y descarga integrada en `table_sql` en validations. Los cursos ocultos se muestran con clase `dimmed_text` (gris). Usa SQL diferenciado para PostgreSQL y MySQL.
 - **`classes/output/issues_table.php`** — Tabla extensible (`table_sql`) para el reporte.
 - **`classes/admin_setting_configdate.php`** — Setting personalizado de tipo fecha para la configuración admin.
 - **`content/`** — Plantillas HTML de cronogramas que se insertan como labels al crear desde el bloque.
@@ -52,13 +52,14 @@ No hay tests automatizados, ni linter configurado, ni sistema de build propio. P
 | Datos de tutoría | Label con nombre, email, teléfono, extensión y horario |
 | Cronograma actividades | Label con tabla HTML conteniendo "CRONOGRAMA DE ACTIVIDADES CALIFICABLES" |
 | Cronograma sesiones | Label con tabla conteniendo "CRONOGRAMA DE SESIONES SÍNCRONAS" |
-| Categorías calificador | 5 categorías requeridas con pesos correctos (no evaluables = 0) |
+| Categorías calificador | 5 categorías requeridas con pesos correctos (no evaluables = 0). Matching flexible: ignora contenido entre paréntesis en el nombre |
 | Actividades evaluables en categorías | Todos los módulos con `grade_item` deben estar en una categoría (no en raíz) |
 | Flujo de trabajo en buzones | Todos los assigns deben tener `markingworkflow` activado |
 | Finalización de curso | El curso debe tener `enablecompletion` activado |
 | Condiciones de finalización | Las actividades evaluables deben tener condiciones de finalización (excluye "Actividades no evaluables") |
 | Mostrar condiciones de finalización | El curso debe tener `showcompletionconditions` activado |
 | Mostrar fechas de actividad | El curso debe tener `showactivitydates` activado |
+| Curso oculto | El curso debe estar oculto (`visible` = 0) |
 
 ### Base de datos
 
