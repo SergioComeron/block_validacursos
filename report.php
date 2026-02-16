@@ -77,6 +77,16 @@ if ($semester === 'first') {
     $semesterparams['sem2'] = '%-2S-%';
 }
 
+// Obtener IDs de cursos hijos meta-enlazados (una sola consulta).
+$metachildids = $DB->get_fieldset_sql("SELECT DISTINCT customint1 FROM {enrol} WHERE enrol = 'meta' AND customint1 IS NOT NULL");
+if (!empty($metachildids)) {
+    $metaexclude_c = ' AND c.id NOT IN (' . implode(',', $metachildids) . ')';
+    $metaexclude_i = ' AND i.courseid NOT IN (' . implode(',', $metachildids) . ')';
+} else {
+    $metaexclude_c = '';
+    $metaexclude_i = '';
+}
+
 $PAGE->set_title($pagetitle);
 $PAGE->set_heading($pagetitle);
 
@@ -93,7 +103,7 @@ if ($tab === 'ok' && $download !== '') {
     $records = $DB->get_records_sql("
         SELECT c.id AS courseid, c.shortname, c.fullname AS coursename
           FROM {course} c
-         WHERE $okwhere $semestersql
+         WHERE $okwhere $semestersql $metaexclude_c
            AND c.id NOT IN (
                SELECT DISTINCT i.courseid
                  FROM {block_validacursos_issues} i
@@ -140,7 +150,7 @@ if ($tab === 'issues' && $download !== '') {
           FROM {block_validacursos_issues} i
           JOIN {course} c ON c.id = i.courseid
           $issuescoursesjoin
-         WHERE $issuescourseswhere $semestersql
+         WHERE $issuescourseswhere $semestersql $metaexclude_i
       GROUP BY i.courseid, c.shortname, c.fullname
       ORDER BY issues DESC, c.fullname ASC
     ", $issuescoursesparams + $semesterparams);
@@ -161,6 +171,72 @@ if ($tab === 'issues' && $download !== '') {
         ];
     });
     die();
+}
+
+// ===== Action: enviar email a profesores =====
+$sendemailcourseid = optional_param('sendemail', 0, PARAM_INT);
+if ($sendemailcourseid) {
+    require_sesskey();
+    $course = $DB->get_record('course', ['id' => $sendemailcourseid], '*', MUST_EXIST);
+    $coursecontext = context_course::instance($course->id);
+
+    // Obtener incidencias abiertas del curso.
+    $openissues = $DB->get_records_select('block_validacursos_issues',
+        'courseid = :courseid AND resolvedat IS NULL',
+        ['courseid' => $sendemailcourseid],
+        'validation ASC');
+
+    // Obtener profesores (editingteacher + teacher).
+    $teachers = [];
+    $roles = $DB->get_records_list('role', 'archetype', ['editingteacher', 'teacher'], '', 'id');
+    if ($roles) {
+        $roleids = array_keys($roles);
+        list($insql, $inparams) = $DB->get_in_or_equal($roleids, SQL_PARAMS_NAMED, 'role');
+        $inparams['contextid'] = $coursecontext->id;
+        $teachers = $DB->get_records_sql("
+            SELECT DISTINCT u.*
+              FROM {role_assignments} ra
+              JOIN {user} u ON u.id = ra.userid
+             WHERE ra.contextid = :contextid
+               AND ra.roleid $insql
+               AND u.deleted = 0
+        ", $inparams);
+    }
+
+    if (!empty($teachers) && !empty($openissues)) {
+        // Construir cuerpo del email.
+        $courseurl = new moodle_url('/course/view.php', ['id' => $course->id]);
+        $a = new stdClass();
+        $a->coursename = format_string($course->fullname);
+        $messagetext = get_string('emailbody', 'block_validacursos', $a) . "\n\n";
+        foreach ($openissues as $issue) {
+            $messagetext .= "- " . $issue->validation . "\n";
+        }
+        $messagetext .= "\n" . get_string('emailcourselink', 'block_validacursos') . ': ' . $courseurl->out(false) . "\n";
+
+        $subject = get_string('emailsubject', 'block_validacursos', format_string($course->fullname));
+        $noreplyuser = core_user::get_noreply_user();
+        $sentcount = 0;
+        foreach ($teachers as $teacher) {
+            if (email_to_user($teacher, $noreplyuser, $subject, $messagetext)) {
+                $sentcount++;
+            }
+        }
+
+        $redirectparams = $pageparams;
+        $redirectparams['tab'] = 'top';
+        $redirecturl = new moodle_url('/blocks/validacursos/report.php', $redirectparams);
+        if ($sentcount > 0) {
+            redirect($redirecturl, get_string('emailsent', 'block_validacursos', $sentcount), null, \core\output\notification::NOTIFY_SUCCESS);
+        } else {
+            redirect($redirecturl, get_string('emailsentfail', 'block_validacursos'), null, \core\output\notification::NOTIFY_ERROR);
+        }
+    } else {
+        $redirectparams = $pageparams;
+        $redirectparams['tab'] = 'top';
+        $redirecturl = new moodle_url('/blocks/validacursos/report.php', $redirectparams);
+        redirect($redirecturl, get_string('emailsentfail', 'block_validacursos'), null, \core\output\notification::NOTIFY_ERROR);
+    }
 }
 
 // ===== Tabla SQL (con descarga integrada) =====
@@ -227,6 +303,7 @@ if ($semester === 'first') {
     $params['sem2'] = '%-2S-%';
 }
 $where = $whereparts ? implode(' AND ', $whereparts) : '1=1';
+$where .= $metaexclude_i;
 
 $table->set_sql($fields, $from, $where, $params);
 $table->set_count_sql("SELECT COUNT(1) FROM $from WHERE $where", $params);
@@ -297,13 +374,13 @@ if (!$table->is_downloading()) {
     }
     $countall = $DB->get_field_sql("SELECT COUNT(1)
                                       FROM {block_validacursos_issues} i $joinall
-                                     WHERE $whereall", $paramsall);
+                                     WHERE $whereall $metaexclude_i", $paramsall);
 
     $paramsopen = $paramsall;
     $whereopen = $whereall . ' AND i.resolvedat IS NULL';
     $countopen = $DB->get_field_sql("SELECT COUNT(1)
                                        FROM {block_validacursos_issues} i $joinall
-                                      WHERE $whereopen", $paramsopen);
+                                      WHERE $whereopen $metaexclude_i", $paramsopen);
 
     // Total real de cursos en las categorías permitidas.
     $totalcoursesparams = [];
@@ -314,12 +391,12 @@ if (!$table->is_downloading()) {
     } else if (!empty($allowedids)) {
         $totalcourseswhere .= ' AND c.category IN (' . implode(',', $allowedids) . ')';
     }
-    $totalcourses = $DB->get_field_sql("SELECT COUNT(1) FROM {course} c WHERE $totalcourseswhere $semestersql", $totalcoursesparams + $semesterparams);
+    $totalcourses = $DB->get_field_sql("SELECT COUNT(1) FROM {course} c WHERE $totalcourseswhere $semestersql $metaexclude_c", $totalcoursesparams + $semesterparams);
 
     // Cursos con al menos una incidencia abierta.
     $courseswithissues = $DB->get_field_sql("SELECT COUNT(DISTINCT i.courseid)
                                               FROM {block_validacursos_issues} i $joinall
-                                             WHERE $whereopen", $paramsopen);
+                                             WHERE $whereopen $metaexclude_i", $paramsopen);
 
     $coursesnoissues = (int)$totalcourses - (int)$courseswithissues;
     $compliancerate = (int)$totalcourses > 0
@@ -365,7 +442,7 @@ if (!$table->is_downloading()) {
     $issuesByValidation = $DB->get_records_sql("
         SELECT i.validation, COUNT(1) AS total
           FROM {block_validacursos_issues} i $joinByVal
-         WHERE $whereByVal
+         WHERE $whereByVal $metaexclude_i
       GROUP BY i.validation
       ORDER BY total DESC
     ", $paramsByVal);
@@ -458,7 +535,7 @@ if (!$table->is_downloading()) {
             SELECT i.courseid, c.fullname AS coursename, COUNT(1) AS issues
               FROM {block_validacursos_issues} i
               JOIN {course} c ON c.id = i.courseid
-             WHERE $topwhere
+             WHERE $topwhere $metaexclude_i
           GROUP BY i.courseid, c.fullname
           ORDER BY issues DESC, c.fullname ASC
              LIMIT 10
@@ -466,17 +543,26 @@ if (!$table->is_downloading()) {
 
         if ($topcourses) {
             $rows = [];
+            $confirmstr = addslashes_js(get_string('sendemailconfirm', 'block_validacursos'));
             foreach ($topcourses as $tc) {
                 $courseurl = new moodle_url('/course/view.php', ['id' => $tc->courseid]);
+                $emailurl = new moodle_url('/blocks/validacursos/report.php',
+                    ['sendemail' => $tc->courseid, 'sesskey' => sesskey()] + $pageparams + ['tab' => 'top']);
+                $emailbtn = html_writer::link($emailurl->out(false),
+                    '&#9993; ' . get_string('sendemail', 'block_validacursos'),
+                    ['class' => 'btn btn-sm btn-outline-primary',
+                     'onclick' => 'return confirm("' . $confirmstr . '")']);
                 $rows[] = html_writer::tag('tr',
                     html_writer::tag('td', html_writer::link($courseurl, format_string($tc->coursename))) .
-                    html_writer::tag('td', (int)$tc->issues, ['style' => 'text-align:right'])
+                    html_writer::tag('td', (int)$tc->issues, ['style' => 'text-align:right']) .
+                    html_writer::tag('td', $emailbtn, ['style' => 'text-align:center'])
                 );
             }
             $tablehtml = html_writer::tag('table',
                 html_writer::tag('thead', html_writer::tag('tr',
                     html_writer::tag('th', get_string('course')) .
-                    html_writer::tag('th', get_string('issues', 'block_validacursos'), ['style' => 'text-align:right'])
+                    html_writer::tag('th', get_string('issues', 'block_validacursos'), ['style' => 'text-align:right']) .
+                    html_writer::tag('th', '', ['style' => 'text-align:center'])
                 )) .
                 html_writer::tag('tbody', implode('', $rows)),
                 ['class' => 'generaltable boxaligncenter', 'style' => 'margin-top: .5rem;']
@@ -488,12 +574,12 @@ if (!$table->is_downloading()) {
 
     } else if ($tab === 'issues') {
         // Selector de descarga estándar Moodle.
-        $downloadurl = new moodle_url('/blocks/validacursos/report.php',
-            ['tab' => 'issues', 'show' => $show] + $filterparams);
+        $downloadparamsissues = ['tab' => 'issues', 'show' => $show] + $filterparams;
         echo $OUTPUT->download_dataformat_selector(
             get_string('downloadas', 'table'),
-            $downloadurl,
-            'download'
+            '/blocks/validacursos/report.php',
+            'download',
+            $downloadparamsissues
         );
 
         // Cursos con incidencias abiertas (listado paginado).
@@ -524,7 +610,7 @@ if (!$table->is_downloading()) {
                   FROM {block_validacursos_issues} i
                   JOIN {course} c ON c.id = i.courseid
                   $issuescoursesjoin
-                 WHERE $issuescourseswhere
+                 WHERE $issuescourseswhere $metaexclude_i
               GROUP BY i.courseid
             ) subq
         ", $issuescoursesparams);
@@ -534,7 +620,7 @@ if (!$table->is_downloading()) {
               FROM {block_validacursos_issues} i
               JOIN {course} c ON c.id = i.courseid
               $issuescoursesjoin
-             WHERE $issuescourseswhere
+             WHERE $issuescourseswhere $metaexclude_i
           GROUP BY i.courseid, c.fullname, c.visible
           ORDER BY issues DESC, c.fullname ASC
         ", $issuescoursesparams, $page * $perpage, $perpage);
@@ -566,12 +652,12 @@ if (!$table->is_downloading()) {
 
     } else if ($tab === 'ok') {
         // Selector de descarga estándar Moodle.
-        $downloadurlok = new moodle_url('/blocks/validacursos/report.php',
-            ['tab' => 'ok', 'show' => $show] + $filterparams);
+        $downloadparamsok = ['tab' => 'ok', 'show' => $show] + $filterparams;
         echo $OUTPUT->download_dataformat_selector(
             get_string('downloadas', 'table'),
-            $downloadurlok,
-            'download'
+            '/blocks/validacursos/report.php',
+            'download',
+            $downloadparamsok
         );
 
         // Cursos sin incidencias abiertas (listado paginado).
@@ -592,7 +678,7 @@ if (!$table->is_downloading()) {
         $totalcoursesok = $DB->get_field_sql("
             SELECT COUNT(1)
               FROM {course} c
-             WHERE $okwhere
+             WHERE $okwhere $metaexclude_c
                AND c.id NOT IN (
                    SELECT DISTINCT i.courseid
                      FROM {block_validacursos_issues} i
@@ -603,7 +689,7 @@ if (!$table->is_downloading()) {
         $coursesok = $DB->get_records_sql("
             SELECT c.id AS courseid, c.fullname AS coursename, c.visible
               FROM {course} c
-             WHERE $okwhere
+             WHERE $okwhere $metaexclude_c
                AND c.id NOT IN (
                    SELECT DISTINCT i.courseid
                      FROM {block_validacursos_issues} i

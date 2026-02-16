@@ -52,8 +52,15 @@ class validate_all_courses extends \core\task\scheduled_task {
             $allowed = array_filter(array_map('intval', explode(',', $allowedcsv)));
         }
 
-        // Fetch visible courses using a recordset for memory efficiency.
-        $rs = $DB->get_recordset('course', [], 'id ASC');
+        // Fetch courses excluding meta-linked children, using a recordset for memory efficiency.
+        $rs = $DB->get_recordset_sql("
+            SELECT c.*
+              FROM {course} c
+             WHERE c.id NOT IN (
+                 SELECT DISTINCT customint1 FROM {enrol} WHERE enrol = 'meta' AND customint1 IS NOT NULL
+             )
+          ORDER BY c.id ASC
+        ");
 
         $processed = 0;
         $errors = 0;
