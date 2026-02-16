@@ -34,6 +34,7 @@ $categoryid = optional_param('category', 0, PARAM_INT);
 $validation = optional_param('validation', '', PARAM_TEXT);
 $tab = optional_param('tab', 'top', PARAM_ALPHA);        // top|issues|validations
 $page = optional_param('page', 0, PARAM_INT);
+$semester = optional_param('semester', '', PARAM_ALPHA);  // first|second|''
 
 // Categorías permitidas.
 $allowedcsv = trim((string)get_config('block_validacursos', 'allowedcategories'));
@@ -53,8 +54,23 @@ if ($categoryid) {
 if ($validation !== '') {
     $pageparams['validation'] = $validation;
 }
+if ($semester !== '') {
+    $pageparams['semester'] = $semester;
+}
 $PAGE->set_url(new moodle_url('/blocks/validacursos/report.php', $pageparams));
 $PAGE->set_pagelayout('report');
+
+// Cláusula SQL para filtro de semestre (requiere alias "c" para course).
+$semestersql = '';
+$semesterparams = [];
+if ($semester === 'first') {
+    $semestersql = ' AND ' . $DB->sql_like('c.fullname', ':semester', false, true, true); // NOT LIKE
+    $semesterparams['semester'] = '%Segundo%';
+} else if ($semester === 'second') {
+    $semestersql = ' AND ' . $DB->sql_like('c.fullname', ':semester', false); // LIKE
+    $semesterparams['semester'] = '%Segundo%';
+}
+
 $PAGE->set_title($pagetitle);
 $PAGE->set_heading($pagetitle);
 
@@ -71,14 +87,14 @@ if ($tab === 'ok' && $download !== '') {
     $records = $DB->get_records_sql("
         SELECT c.id AS courseid, c.shortname, c.fullname AS coursename
           FROM {course} c
-         WHERE $okwhere
+         WHERE $okwhere $semestersql
            AND c.id NOT IN (
                SELECT DISTINCT i.courseid
                  FROM {block_validacursos_issues} i
                 WHERE i.resolvedat IS NULL
            )
       ORDER BY c.fullname ASC
-    ", $okparams);
+    ", $okparams + $semesterparams);
 
     $columns = [
         'courseid' => get_string('courseid', 'block_validacursos'),
@@ -118,10 +134,10 @@ if ($tab === 'issues' && $download !== '') {
           FROM {block_validacursos_issues} i
           JOIN {course} c ON c.id = i.courseid
           $issuescoursesjoin
-         WHERE $issuescourseswhere
+         WHERE $issuescourseswhere $semestersql
       GROUP BY i.courseid, c.shortname, c.fullname
       ORDER BY issues DESC, c.fullname ASC
-    ", $issuescoursesparams);
+    ", $issuescoursesparams + $semesterparams);
 
     $columns = [
         'courseid' => get_string('courseid', 'block_validacursos'),
@@ -193,6 +209,13 @@ if ($validation !== '') {
     $whereparts[] = 'i.validation = :validation';
     $params['validation'] = $validation;
 }
+if ($semester === 'first') {
+    $whereparts[] = $DB->sql_like('c.fullname', ':semester', false, true, true);
+    $params['semester'] = '%Segundo%';
+} else if ($semester === 'second') {
+    $whereparts[] = $DB->sql_like('c.fullname', ':semester', false);
+    $params['semester'] = '%Segundo%';
+}
 $where = $whereparts ? implode(' AND ', $whereparts) : '1=1';
 
 $table->set_sql($fields, $from, $where, $params);
@@ -203,7 +226,9 @@ if (!$table->is_downloading()) {
     echo $OUTPUT->header();
 
     // Pestañas conservando filtros.
-    $filterparams = ($categoryid ? ['category' => $categoryid] : []) + ($validation !== '' ? ['validation' => $validation] : []);
+    $filterparams = ($categoryid ? ['category' => $categoryid] : [])
+        + ($validation !== '' ? ['validation' => $validation] : [])
+        + ($semester !== '' ? ['semester' => $semester] : []);
     $urlopen = new moodle_url('/blocks/validacursos/report.php', ['show' => 'open'] + $filterparams);
     $urlall  = new moodle_url('/blocks/validacursos/report.php', ['show' => 'all'] + $filterparams);
     echo html_writer::div(
@@ -230,6 +255,12 @@ if (!$table->is_downloading()) {
     echo ' ';
     echo html_writer::select(['' => get_string('allvalidations', 'block_validacursos')] + $validationoptions,
         'validation', $validation, null, ['onchange' => 'this.form.submit()']);
+    echo ' ';
+    echo html_writer::select([
+        '' => get_string('allsemesters', 'block_validacursos'),
+        'first' => get_string('firstsemester', 'block_validacursos'),
+        'second' => get_string('secondsemester', 'block_validacursos'),
+    ], 'semester', $semester, null, ['onchange' => 'this.form.submit()']);
     echo html_writer::end_tag('form');
 
     // ===== Estadísticas =====
@@ -237,13 +268,18 @@ if (!$table->is_downloading()) {
     $paramsall = [];
     $whereall = '1=1';
     $joinall = '';
-    if ($categoryid) {
+    if ($categoryid || !empty($allowedids) || $semester !== '') {
         $joinall = ' JOIN {course} c ON c.id = i.courseid';
+    }
+    if ($categoryid) {
         $whereall .= ' AND c.category = :categoryid_all';
         $paramsall['categoryid_all'] = $categoryid;
     } else if (!empty($allowedids)) {
-        $joinall = ' JOIN {course} c ON c.id = i.courseid';
         $whereall .= ' AND c.category IN (' . implode(',', $allowedids) . ')';
+    }
+    if ($semester !== '') {
+        $whereall .= ' ' . $semestersql;
+        $paramsall = $paramsall + $semesterparams;
     }
     if ($validation !== '') {
         $whereall .= ' AND i.validation = :validation_all';
@@ -268,7 +304,7 @@ if (!$table->is_downloading()) {
     } else if (!empty($allowedids)) {
         $totalcourseswhere .= ' AND c.category IN (' . implode(',', $allowedids) . ')';
     }
-    $totalcourses = $DB->get_field_sql("SELECT COUNT(1) FROM {course} c WHERE $totalcourseswhere", $totalcoursesparams);
+    $totalcourses = $DB->get_field_sql("SELECT COUNT(1) FROM {course} c WHERE $totalcourseswhere $semestersql", $totalcoursesparams + $semesterparams);
 
     // Cursos con al menos una incidencia abierta.
     $courseswithissues = $DB->get_field_sql("SELECT COUNT(DISTINCT i.courseid)
@@ -299,13 +335,18 @@ if (!$table->is_downloading()) {
     $paramsByVal = [];
     $whereByVal = 'i.resolvedat IS NULL';
     $joinByVal = '';
-    if ($categoryid) {
+    if ($categoryid || !empty($allowedids) || $semester !== '') {
         $joinByVal = ' JOIN {course} c ON c.id = i.courseid';
+    }
+    if ($categoryid) {
         $whereByVal .= ' AND c.category = :categoryid_byval';
         $paramsByVal['categoryid_byval'] = $categoryid;
     } else if (!empty($allowedids)) {
-        $joinByVal = ' JOIN {course} c ON c.id = i.courseid';
         $whereByVal .= ' AND c.category IN (' . implode(',', $allowedids) . ')';
+    }
+    if ($semester !== '') {
+        $whereByVal .= ' ' . $semestersql;
+        $paramsByVal = $paramsByVal + $semesterparams;
     }
     if ($validation !== '') {
         $whereByVal .= ' AND i.validation = :validation_byval';
@@ -399,6 +440,10 @@ if (!$table->is_downloading()) {
             $topwhere .= ' AND i.validation = :validation_top';
             $topparams['validation_top'] = $validation;
         }
+        if ($semester !== '') {
+            $topwhere .= ' ' . $semestersql;
+            $topparams = $topparams + $semesterparams;
+        }
         $topcourses = $DB->get_records_sql("
             SELECT i.courseid, c.fullname AS coursename, COUNT(1) AS issues
               FROM {block_validacursos_issues} i
@@ -457,6 +502,10 @@ if (!$table->is_downloading()) {
         if ($validation !== '') {
             $issuescourseswhere .= ' AND i.validation = :validation_ic';
             $issuescoursesparams['validation_ic'] = $validation;
+        }
+        if ($semester !== '') {
+            $issuescourseswhere .= ' ' . $semestersql;
+            $issuescoursesparams = $issuescoursesparams + $semesterparams;
         }
 
         $totalcoursesWithIssues = $DB->get_field_sql("
@@ -524,6 +573,10 @@ if (!$table->is_downloading()) {
             $okparams['categoryid_ok'] = $categoryid;
         } else if (!empty($allowedids)) {
             $okwhere .= ' AND c.category IN (' . implode(',', $allowedids) . ')';
+        }
+        if ($semester !== '') {
+            $okwhere .= ' ' . $semestersql;
+            $okparams = $okparams + $semesterparams;
         }
 
         $totalcoursesok = $DB->get_field_sql("
