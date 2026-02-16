@@ -61,14 +61,20 @@ $PAGE->set_url(new moodle_url('/blocks/validacursos/report.php', $pageparams));
 $PAGE->set_pagelayout('report');
 
 // Cláusula SQL para filtro de semestre (requiere alias "c" para course).
+// Segundo semestre: fullname contiene "Segundo" o "-2S-".
+// Primer semestre: fullname NO contiene "Segundo" ni "-2S-".
 $semestersql = '';
 $semesterparams = [];
 if ($semester === 'first') {
-    $semestersql = ' AND ' . $DB->sql_like('c.fullname', ':semester', false, true, true); // NOT LIKE
-    $semesterparams['semester'] = '%Segundo%';
+    $semestersql = ' AND ' . $DB->sql_like('c.fullname', ':sem1', false, true, true)
+                 . ' AND ' . $DB->sql_like('c.fullname', ':sem2', false, true, true);
+    $semesterparams['sem1'] = '%Segundo%';
+    $semesterparams['sem2'] = '%-2S-%';
 } else if ($semester === 'second') {
-    $semestersql = ' AND ' . $DB->sql_like('c.fullname', ':semester', false); // LIKE
-    $semesterparams['semester'] = '%Segundo%';
+    $semestersql = ' AND (' . $DB->sql_like('c.fullname', ':sem1', false)
+                 . ' OR ' . $DB->sql_like('c.fullname', ':sem2', false) . ')';
+    $semesterparams['sem1'] = '%Segundo%';
+    $semesterparams['sem2'] = '%-2S-%';
 }
 
 $PAGE->set_title($pagetitle);
@@ -210,11 +216,15 @@ if ($validation !== '') {
     $params['validation'] = $validation;
 }
 if ($semester === 'first') {
-    $whereparts[] = $DB->sql_like('c.fullname', ':semester', false, true, true);
-    $params['semester'] = '%Segundo%';
+    $whereparts[] = $DB->sql_like('c.fullname', ':sem1', false, true, true);
+    $whereparts[] = $DB->sql_like('c.fullname', ':sem2', false, true, true);
+    $params['sem1'] = '%Segundo%';
+    $params['sem2'] = '%-2S-%';
 } else if ($semester === 'second') {
-    $whereparts[] = $DB->sql_like('c.fullname', ':semester', false);
-    $params['semester'] = '%Segundo%';
+    $whereparts[] = '(' . $DB->sql_like('c.fullname', ':sem1', false)
+                  . ' OR ' . $DB->sql_like('c.fullname', ':sem2', false) . ')';
+    $params['sem1'] = '%Segundo%';
+    $params['sem2'] = '%-2S-%';
 }
 $where = $whereparts ? implode(' AND ', $whereparts) : '1=1';
 
