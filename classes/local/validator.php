@@ -616,7 +616,7 @@ class validator {
      * @return string
      */
     private static function normalizar_para_comparar(string $texto): string {
-        return self::quitar_tildes(core_text::strtolower(trim($texto)));
+        return rtrim(self::quitar_tildes(core_text::strtolower(trim($texto))), '.');
     }
 
     /**

@@ -74,7 +74,7 @@ Tabla `block_validacursos_issues`: campos `courseid`, `validation`, `state` (0=a
 ## Convenciones del código
 
 - Namespaces: `block_validacursos\local\*` para lógica, `block_validacursos\output\*` para renderizado.
-- Comparación de nombres insensible a mayúsculas y tildes usando `normalizar_para_comparar()` (internamente: `core_text::strtolower()` + `Normalizer::FORM_D` + eliminación de combining marks). Todas las validaciones que comparan nombres (foros, guía docente, categorías del calificador, claves de tutoría, cronogramas) usan este helper.
+- Comparación de nombres insensible a mayúsculas, tildes y puntos finales usando `normalizar_para_comparar()` (internamente: `core_text::strtolower()` + trim + eliminación de puntos finales con `rtrim(..., '.')` + `Normalizer::FORM_D` + eliminación de combining marks). Todas las validaciones que comparan nombres (foros, guía docente, categorías del calificador, claves de tutoría, cronogramas) usan este helper.
 - SQL compatible PostgreSQL/MySQL: usar `$DB->sql_concat()` y condicionales con `$CFG->dbtype` cuando sea necesario.
 - Cada validación retorna un array `[nombre, estado (bool), mensaje, detalle]`.
 - Las acciones del bloque usan `optional_param()` + `require_sesskey()` y redirigen tras ejecutar.
