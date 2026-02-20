@@ -84,3 +84,4 @@ $string['emailsubject'] = 'Pending validations for course: {$a}';
 $string['emailbody'] = 'The following validations are pending for the course "{$a->coursename}":';
 $string['emailcourselink'] = 'Go to course';
 $string['sendemail'] = 'Send email';
+$string['failedvalidations'] = 'Failed validations';

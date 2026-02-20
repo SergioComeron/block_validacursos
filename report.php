@@ -32,7 +32,7 @@ $download = optional_param('download', '', PARAM_ALPHA); // csv|excel
 $show = optional_param('show', 'open', PARAM_ALPHA);     // open|all
 $categoryid = optional_param('category', 0, PARAM_INT);
 $validation = optional_param('validation', '', PARAM_TEXT);
-$tab = optional_param('tab', 'top', PARAM_ALPHA);        // top|issues|validations
+$tab = optional_param('tab', 'top', PARAM_ALPHA);        // top|issues|ok|validations
 $page = optional_param('page', 0, PARAM_INT);
 $semester = optional_param('semester', '', PARAM_ALPHA);  // first|second|''
 
@@ -61,8 +61,6 @@ $PAGE->set_url(new moodle_url('/blocks/validacursos/report.php', $pageparams));
 $PAGE->set_pagelayout('report');
 
 // Cláusula SQL para filtro de semestre (requiere alias "c" para course).
-// Segundo semestre: fullname contiene "Segundo" o "-2S-".
-// Primer semestre: fullname NO contiene "Segundo" ni "-2S-".
 $semestersql = '';
 $semesterparams = [];
 if ($semester === 'first') {
@@ -89,89 +87,6 @@ if (!empty($metachildids)) {
 
 $PAGE->set_title($pagetitle);
 $PAGE->set_heading($pagetitle);
-
-// ===== Exportación pestaña ok (dataformat estándar Moodle) =====
-if ($tab === 'ok' && $download !== '') {
-    $okparams = [];
-    $okwhere = 'c.id != ' . SITEID;
-    if ($categoryid) {
-        $okwhere .= ' AND c.category = :categoryid_ok';
-        $okparams['categoryid_ok'] = $categoryid;
-    } else if (!empty($allowedids)) {
-        $okwhere .= ' AND c.category IN (' . implode(',', $allowedids) . ')';
-    }
-    $records = $DB->get_records_sql("
-        SELECT c.id AS courseid, c.shortname, c.fullname AS coursename
-          FROM {course} c
-         WHERE $okwhere $semestersql $metaexclude_c
-           AND c.id NOT IN (
-               SELECT DISTINCT i.courseid
-                 FROM {block_validacursos_issues} i
-                WHERE i.resolvedat IS NULL
-           )
-      ORDER BY c.fullname ASC
-    ", $okparams + $semesterparams);
-
-    $columns = [
-        'courseid' => get_string('courseid', 'block_validacursos'),
-        'shortname' => get_string('shortname'),
-        'coursename' => get_string('course'),
-    ];
-
-    \core\dataformat::download_data('courses_without_issues', $download, $columns, $records, function($rec) {
-        return [
-            'courseid' => $rec->courseid,
-            'shortname' => $rec->shortname,
-            'coursename' => $rec->coursename,
-        ];
-    });
-    die();
-}
-
-// ===== Exportación pestaña issues (dataformat estándar Moodle) =====
-if ($tab === 'issues' && $download !== '') {
-    $issuescoursesparams = [];
-    $issuescourseswhere = 'i.resolvedat IS NULL';
-    $issuescoursesjoin = '';
-    if ($categoryid) {
-        $issuescoursesjoin = ' JOIN {course_categories} cc ON cc.id = c.category';
-        $issuescourseswhere .= ' AND c.category = :categoryid_ic';
-        $issuescoursesparams['categoryid_ic'] = $categoryid;
-    } else if (!empty($allowedids)) {
-        $issuescoursesjoin = ' JOIN {course_categories} cc ON cc.id = c.category';
-        $issuescourseswhere .= ' AND c.category IN (' . implode(',', $allowedids) . ')';
-    }
-    if ($validation !== '') {
-        $issuescourseswhere .= ' AND i.validation = :validation_ic';
-        $issuescoursesparams['validation_ic'] = $validation;
-    }
-    $records = $DB->get_records_sql("
-        SELECT i.courseid, c.shortname, c.fullname AS coursename, COUNT(1) AS issues
-          FROM {block_validacursos_issues} i
-          JOIN {course} c ON c.id = i.courseid
-          $issuescoursesjoin
-         WHERE $issuescourseswhere $semestersql $metaexclude_i
-      GROUP BY i.courseid, c.shortname, c.fullname
-      ORDER BY issues DESC, c.fullname ASC
-    ", $issuescoursesparams + $semesterparams);
-
-    $columns = [
-        'courseid' => get_string('courseid', 'block_validacursos'),
-        'shortname' => get_string('shortname'),
-        'coursename' => get_string('course'),
-        'issues' => get_string('issues', 'block_validacursos'),
-    ];
-
-    \core\dataformat::download_data('courses_with_issues', $download, $columns, $records, function($rec) {
-        return [
-            'courseid' => $rec->courseid,
-            'shortname' => $rec->shortname,
-            'coursename' => $rec->coursename,
-            'issues' => (int)$rec->issues,
-        ];
-    });
-    die();
-}
 
 // ===== Action: enviar email a profesores =====
 $sendemailcourseid = optional_param('sendemail', 0, PARAM_INT);
@@ -239,18 +154,13 @@ if ($sendemailcourseid) {
     }
 }
 
-// ===== Tabla SQL (con descarga integrada) =====
-$uniqueid = 'block_validacursos_issues';
-$table = new \block_validacursos\output\issues_table($uniqueid);
-$validationsdownload = ($tab === 'validations' && $download !== '') ? $download : '';
-$table->is_downloading($validationsdownload, 'validacursos_issues', 'validacursos_issues');
-$table->show_download_buttons_at([TABLE_P_BOTTOM]);
-$table->define_baseurl($PAGE->url);
-
-$contextcourselevel = CONTEXT_COURSE;
+// ===== Configuración común =====
 $dbfamily = $DB->get_dbfamily();
+$contextcourselevel = CONTEXT_COURSE;
+
+// Subconsulta de profesores (reutilizable).
 if ($dbfamily === 'postgres') {
-    $teacherselect = "(SELECT string_agg(COALESCE(u.firstname,'') || ' ' || COALESCE(u.lastname,''), ', ' ORDER BY u.lastname, u.firstname)
+    $teachersubquery = "(SELECT string_agg(COALESCE(u.firstname,'') || ' ' || COALESCE(u.lastname,''), ', ' ORDER BY u.lastname, u.firstname)
                          FROM {role_assignments} ra
                          JOIN {context} ctx ON ctx.id = ra.contextid
                          JOIN {role} r ON r.id = ra.roleid
@@ -258,7 +168,7 @@ if ($dbfamily === 'postgres') {
                         WHERE ctx.contextlevel = :ctxlevel AND ctx.instanceid = i.courseid
                           AND r.archetype IN ('editingteacher','teacher') AND u.deleted = 0)";
 } else {
-    $teacherselect = "(SELECT GROUP_CONCAT(CONCAT(u.firstname, ' ', u.lastname) ORDER BY u.lastname SEPARATOR ', ')
+    $teachersubquery = "(SELECT GROUP_CONCAT(CONCAT(u.firstname, ' ', u.lastname) ORDER BY u.lastname SEPARATOR ', ')
                          FROM {role_assignments} ra
                          JOIN {context} ctx ON ctx.id = ra.contextid
                          JOIN {role} r ON r.id = ra.roleid
@@ -267,49 +177,172 @@ if ($dbfamily === 'postgres') {
                           AND r.archetype IN ('editingteacher','teacher') AND u.deleted = 0)";
 }
 
-$fields = 'i.id, i.courseid, c.shortname AS courseshortname, c.fullname AS coursename, c.visible AS coursevisible, ' .
-          'cc.name AS categoryname, ' .
-          'i.validation, i.firstseen, i.lastseen, i.resolvedat, ' . $teacherselect . ' AS teachers';
-
-$from   = '{block_validacursos_issues} i
-            JOIN {course} c ON c.id = i.courseid
-            JOIN {course_categories} cc ON cc.id = c.category';
-
-$whereparts = [];
-$params = [];
-$params['ctxlevel'] = $contextcourselevel;
-if ($show !== 'all') {
-    $whereparts[] = 'i.resolvedat IS NULL';
-}
+// Filtros comunes para issues (reutilizables en top/issues).
+$issueswhere_parts = ['i.resolvedat IS NULL'];
+$issuesparams_base = [];
 if ($categoryid) {
-    $whereparts[] = 'c.category = :categoryid';
-    $params['categoryid'] = $categoryid;
+    $issueswhere_parts[] = 'c.category = :categoryid';
+    $issuesparams_base['categoryid'] = $categoryid;
 } else if (!empty($allowedids)) {
-    $whereparts[] = 'c.category IN (' . implode(',', $allowedids) . ')';
+    $issueswhere_parts[] = 'c.category IN (' . implode(',', $allowedids) . ')';
 }
 if ($validation !== '') {
-    $whereparts[] = 'i.validation = :validation';
-    $params['validation'] = $validation;
+    $issueswhere_parts[] = 'i.validation = :validation';
+    $issuesparams_base['validation'] = $validation;
 }
 if ($semester === 'first') {
-    $whereparts[] = $DB->sql_like('c.fullname', ':sem1', false, true, true);
-    $whereparts[] = $DB->sql_like('c.fullname', ':sem2', false, true, true);
-    $params['sem1'] = '%Segundo%';
-    $params['sem2'] = '%-2S-%';
+    $issueswhere_parts[] = $DB->sql_like('c.fullname', ':sem1', false, true, true);
+    $issueswhere_parts[] = $DB->sql_like('c.fullname', ':sem2', false, true, true);
+    $issuesparams_base['sem1'] = '%Segundo%';
+    $issuesparams_base['sem2'] = '%-2S-%';
 } else if ($semester === 'second') {
-    $whereparts[] = '(' . $DB->sql_like('c.fullname', ':sem1', false)
-                  . ' OR ' . $DB->sql_like('c.fullname', ':sem2', false) . ')';
-    $params['sem1'] = '%Segundo%';
-    $params['sem2'] = '%-2S-%';
+    $issueswhere_parts[] = '(' . $DB->sql_like('c.fullname', ':sem1', false)
+                          . ' OR ' . $DB->sql_like('c.fullname', ':sem2', false) . ')';
+    $issuesparams_base['sem1'] = '%Segundo%';
+    $issuesparams_base['sem2'] = '%-2S-%';
 }
-$where = $whereparts ? implode(' AND ', $whereparts) : '1=1';
-$where .= $metaexclude_i;
+$issueswhere_base = implode(' AND ', $issueswhere_parts) . $metaexclude_i;
 
-$table->set_sql($fields, $from, $where, $params);
-$table->set_count_sql("SELECT COUNT(1) FROM $from WHERE $where", $params);
+// ===== Configurar tabla activa según pestaña =====
+$activetable = null;
+$downloading = false;
+
+if ($tab === 'top') {
+    $activetable = new \block_validacursos\output\top_courses_table('block_validacursos_top', $pageparams);
+    $topdl = $download !== '' ? $download : '';
+    $activetable->is_downloading($topdl, 'top_courses_issues', 'top_courses_issues');
+    $activetable->show_download_buttons_at([TABLE_P_BOTTOM]);
+    $activetable->define_baseurl($PAGE->url);
+
+    $topsubquery = "(SELECT i.courseid, c.fullname AS coursename, COUNT(1) AS issues
+                       FROM {block_validacursos_issues} i
+                       JOIN {course} c ON c.id = i.courseid
+                      WHERE $issueswhere_base
+                   GROUP BY i.courseid, c.fullname)";
+    $activetable->set_sql('*', "$topsubquery subq", '1=1', $issuesparams_base);
+    $activetable->set_count_sql("SELECT COUNT(*) FROM $topsubquery subq_count", $issuesparams_base);
+    $downloading = $activetable->is_downloading();
+
+} else if ($tab === 'issues') {
+    $activetable = new \block_validacursos\output\issues_courses_table('block_validacursos_issues_courses');
+    $issuesdl = $download !== '' ? $download : '';
+    $activetable->is_downloading($issuesdl, 'courses_with_issues', 'courses_with_issues');
+    $activetable->show_download_buttons_at([TABLE_P_BOTTOM]);
+    $activetable->define_baseurl($PAGE->url);
+
+    // Agregación de validaciones fallidas.
+    if ($dbfamily === 'postgres') {
+        $validationsagg = "string_agg(DISTINCT i.validation, ', ' ORDER BY i.validation)";
+    } else {
+        $validationsagg = "GROUP_CONCAT(DISTINCT i.validation ORDER BY i.validation SEPARATOR ', ')";
+    }
+
+    $issuessubquery = "(SELECT i.courseid, c.fullname AS coursename, c.visible AS coursevisible,
+                               cc.name AS categoryname, COUNT(1) AS issues,
+                               $teachersubquery AS teachers,
+                               $validationsagg AS failedvalidations
+                          FROM {block_validacursos_issues} i
+                          JOIN {course} c ON c.id = i.courseid
+                          JOIN {course_categories} cc ON cc.id = c.category
+                         WHERE $issueswhere_base
+                      GROUP BY i.courseid, c.fullname, c.visible, cc.name)";
+    $issuessubparams = $issuesparams_base + ['ctxlevel' => $contextcourselevel];
+    $activetable->set_sql('*', "$issuessubquery subq", '1=1', $issuessubparams);
+    $activetable->set_count_sql("SELECT COUNT(*) FROM (SELECT i.courseid
+                          FROM {block_validacursos_issues} i
+                          JOIN {course} c ON c.id = i.courseid
+                          JOIN {course_categories} cc ON cc.id = c.category
+                         WHERE $issueswhere_base
+                      GROUP BY i.courseid) subq_count", $issuesparams_base);
+    $downloading = $activetable->is_downloading();
+
+} else if ($tab === 'ok') {
+    $activetable = new \block_validacursos\output\ok_courses_table('block_validacursos_ok');
+    $okdl = $download !== '' ? $download : '';
+    $activetable->is_downloading($okdl, 'courses_without_issues', 'courses_without_issues');
+    $activetable->show_download_buttons_at([TABLE_P_BOTTOM]);
+    $activetable->define_baseurl($PAGE->url);
+
+    $okwhere_parts = ['c.id != ' . SITEID];
+    $okparams = [];
+    if ($categoryid) {
+        $okwhere_parts[] = 'c.category = :categoryid_ok';
+        $okparams['categoryid_ok'] = $categoryid;
+    } else if (!empty($allowedids)) {
+        $okwhere_parts[] = 'c.category IN (' . implode(',', $allowedids) . ')';
+    }
+    if ($semester === 'first') {
+        $okwhere_parts[] = $DB->sql_like('c.fullname', ':sem1', false, true, true);
+        $okwhere_parts[] = $DB->sql_like('c.fullname', ':sem2', false, true, true);
+        $okparams['sem1'] = '%Segundo%';
+        $okparams['sem2'] = '%-2S-%';
+    } else if ($semester === 'second') {
+        $okwhere_parts[] = '(' . $DB->sql_like('c.fullname', ':sem1', false)
+                          . ' OR ' . $DB->sql_like('c.fullname', ':sem2', false) . ')';
+        $okparams['sem1'] = '%Segundo%';
+        $okparams['sem2'] = '%-2S-%';
+    }
+    $okwhere = implode(' AND ', $okwhere_parts) . $metaexclude_c
+             . ' AND c.id NOT IN (SELECT DISTINCT i.courseid FROM {block_validacursos_issues} i WHERE i.resolvedat IS NULL)';
+
+    $activetable->set_sql('c.id AS courseid, c.fullname AS coursename, c.visible AS coursevisible',
+                          '{course} c', $okwhere, $okparams);
+    $activetable->set_count_sql("SELECT COUNT(1) FROM {course} c WHERE $okwhere", $okparams);
+    $downloading = $activetable->is_downloading();
+
+} else {
+    // Tab: validations.
+    $activetable = new \block_validacursos\output\issues_table('block_validacursos_issues');
+    $validationsdl = $download !== '' ? $download : '';
+    $activetable->is_downloading($validationsdl, 'validacursos_issues', 'validacursos_issues');
+    $activetable->show_download_buttons_at([TABLE_P_BOTTOM]);
+    $activetable->define_baseurl($PAGE->url);
+
+    $fields = 'i.id, i.courseid, c.shortname AS courseshortname, c.fullname AS coursename, c.visible AS coursevisible, ' .
+              'cc.name AS categoryname, ' .
+              'i.validation, i.firstseen, i.lastseen, i.resolvedat, ' . $teachersubquery . ' AS teachers';
+
+    $from = '{block_validacursos_issues} i
+             JOIN {course} c ON c.id = i.courseid
+             JOIN {course_categories} cc ON cc.id = c.category';
+
+    $vwhereparts = [];
+    $vparams = [];
+    $vparams['ctxlevel'] = $contextcourselevel;
+    if ($show !== 'all') {
+        $vwhereparts[] = 'i.resolvedat IS NULL';
+    }
+    if ($categoryid) {
+        $vwhereparts[] = 'c.category = :categoryid';
+        $vparams['categoryid'] = $categoryid;
+    } else if (!empty($allowedids)) {
+        $vwhereparts[] = 'c.category IN (' . implode(',', $allowedids) . ')';
+    }
+    if ($validation !== '') {
+        $vwhereparts[] = 'i.validation = :validation';
+        $vparams['validation'] = $validation;
+    }
+    if ($semester === 'first') {
+        $vwhereparts[] = $DB->sql_like('c.fullname', ':sem1', false, true, true);
+        $vwhereparts[] = $DB->sql_like('c.fullname', ':sem2', false, true, true);
+        $vparams['sem1'] = '%Segundo%';
+        $vparams['sem2'] = '%-2S-%';
+    } else if ($semester === 'second') {
+        $vwhereparts[] = '(' . $DB->sql_like('c.fullname', ':sem1', false)
+                        . ' OR ' . $DB->sql_like('c.fullname', ':sem2', false) . ')';
+        $vparams['sem1'] = '%Segundo%';
+        $vparams['sem2'] = '%-2S-%';
+    }
+    $vwhere = $vwhereparts ? implode(' AND ', $vwhereparts) : '1=1';
+    $vwhere .= $metaexclude_i;
+
+    $activetable->set_sql($fields, $from, $vwhere, $vparams);
+    $activetable->set_count_sql("SELECT COUNT(1) FROM $from WHERE $vwhere", $vparams);
+    $downloading = $activetable->is_downloading();
+}
 
 // ===== Render =====
-if (!$table->is_downloading()) {
+if (!$downloading) {
     echo $OUTPUT->header();
 
     // Pestañas conservando filtros.
@@ -351,7 +384,6 @@ if (!$table->is_downloading()) {
     echo html_writer::end_tag('form');
 
     // ===== Estadísticas =====
-    // Total issues y open issues.
     $paramsall = [];
     $whereall = '1=1';
     $joinall = '';
@@ -382,7 +414,6 @@ if (!$table->is_downloading()) {
                                        FROM {block_validacursos_issues} i $joinall
                                       WHERE $whereopen $metaexclude_i", $paramsopen);
 
-    // Total real de cursos en las categorías permitidas.
     $totalcoursesparams = [];
     $totalcourseswhere = 'c.id != ' . SITEID;
     if ($categoryid) {
@@ -393,7 +424,6 @@ if (!$table->is_downloading()) {
     }
     $totalcourses = $DB->get_field_sql("SELECT COUNT(1) FROM {course} c WHERE $totalcourseswhere $semestersql $metaexclude_c", $totalcoursesparams + $semesterparams);
 
-    // Cursos con al menos una incidencia abierta.
     $courseswithissues = $DB->get_field_sql("SELECT COUNT(DISTINCT i.courseid)
                                               FROM {block_validacursos_issues} i $joinall
                                              WHERE $whereopen $metaexclude_i", $paramsopen);
@@ -403,7 +433,6 @@ if (!$table->is_downloading()) {
         ? round(($coursesnoissues / (int)$totalcourses) * 100, 1)
         : 0;
 
-    // Render estadísticas.
     echo html_writer::start_div('box generalbox mb-3');
     echo html_writer::div(
         html_writer::tag('strong', get_string('totalissues', 'block_validacursos') . ': ') . (int)$countall
@@ -418,7 +447,6 @@ if (!$table->is_downloading()) {
     echo html_writer::end_div();
 
     // ===== Gráficos =====
-    // Datos: incidencias abiertas por tipo de validación.
     $paramsByVal = [];
     $whereByVal = 'i.resolvedat IS NULL';
     $joinByVal = '';
@@ -449,7 +477,6 @@ if (!$table->is_downloading()) {
 
     echo html_writer::start_div('', ['style' => 'display:flex; flex-wrap:wrap; gap:2rem; margin-bottom:1.5rem; max-width:1000px; align-items:flex-start;']);
 
-    // Gráfico de barras: incidencias por validación.
     if ($issuesByValidation) {
         $labels = [];
         $values = [];
@@ -473,7 +500,6 @@ if (!$table->is_downloading()) {
         echo html_writer::div($OUTPUT->render($barchart), '', ['style' => 'flex:2; min-width:300px; max-width:500px;']);
     }
 
-    // Gráfico donut: cumplimiento.
     if ((int)$totalcourses > 0) {
         $pieseries = new \core\chart_series(
             get_string('complianceoverview', 'block_validacursos'),
@@ -512,225 +538,11 @@ if (!$table->is_downloading()) {
     echo '<li class="nav-item"><a class="nav-link' . ($tab === 'validations' ? ' active' : '') . '" href="' . $urlvalidations . '">'
         . get_string('tabvalidations', 'block_validacursos') . '</a></li>';
     echo '</ul>';
-
-    if ($tab === 'top') {
-        // Top cursos con más incidencias abiertas.
-        $topparams = [];
-        $topwhere = '1=1 AND i.resolvedat IS NULL';
-        if ($categoryid) {
-            $topwhere .= ' AND c.category = :categoryid_top';
-            $topparams['categoryid_top'] = $categoryid;
-        } else if (!empty($allowedids)) {
-            $topwhere .= ' AND c.category IN (' . implode(',', $allowedids) . ')';
-        }
-        if ($validation !== '') {
-            $topwhere .= ' AND i.validation = :validation_top';
-            $topparams['validation_top'] = $validation;
-        }
-        if ($semester !== '') {
-            $topwhere .= ' ' . $semestersql;
-            $topparams = $topparams + $semesterparams;
-        }
-        $topcourses = $DB->get_records_sql("
-            SELECT i.courseid, c.fullname AS coursename, COUNT(1) AS issues
-              FROM {block_validacursos_issues} i
-              JOIN {course} c ON c.id = i.courseid
-             WHERE $topwhere $metaexclude_i
-          GROUP BY i.courseid, c.fullname
-          ORDER BY issues DESC, c.fullname ASC
-             LIMIT 10
-        ", $topparams);
-
-        if ($topcourses) {
-            $rows = [];
-            $confirmstr = addslashes_js(get_string('sendemailconfirm', 'block_validacursos'));
-            foreach ($topcourses as $tc) {
-                $courseurl = new moodle_url('/course/view.php', ['id' => $tc->courseid]);
-                $emailurl = new moodle_url('/blocks/validacursos/report.php',
-                    ['sendemail' => $tc->courseid, 'sesskey' => sesskey()] + $pageparams + ['tab' => 'top']);
-                $emailbtn = html_writer::link($emailurl->out(false),
-                    '&#9993; ' . get_string('sendemail', 'block_validacursos'),
-                    ['class' => 'btn btn-sm btn-outline-primary',
-                     'onclick' => 'return confirm("' . $confirmstr . '")']);
-                $rows[] = html_writer::tag('tr',
-                    html_writer::tag('td', html_writer::link($courseurl, format_string($tc->coursename))) .
-                    html_writer::tag('td', (int)$tc->issues, ['style' => 'text-align:right']) .
-                    html_writer::tag('td', $emailbtn, ['style' => 'text-align:center'])
-                );
-            }
-            $tablehtml = html_writer::tag('table',
-                html_writer::tag('thead', html_writer::tag('tr',
-                    html_writer::tag('th', get_string('course')) .
-                    html_writer::tag('th', get_string('issues', 'block_validacursos'), ['style' => 'text-align:right']) .
-                    html_writer::tag('th', '', ['style' => 'text-align:center'])
-                )) .
-                html_writer::tag('tbody', implode('', $rows)),
-                ['class' => 'generaltable boxaligncenter', 'style' => 'margin-top: .5rem;']
-            );
-            echo html_writer::tag('div', $tablehtml, ['class' => 'box generalbox mb-3']);
-        } else {
-            echo html_writer::div(get_string('coursesnoissues', 'block_validacursos'), 'alert alert-success');
-        }
-
-    } else if ($tab === 'issues') {
-        // Selector de descarga estándar Moodle.
-        $downloadparamsissues = ['tab' => 'issues', 'show' => $show] + $filterparams;
-        echo $OUTPUT->download_dataformat_selector(
-            get_string('downloadas', 'table'),
-            '/blocks/validacursos/report.php',
-            'download',
-            $downloadparamsissues
-        );
-
-        // Cursos con incidencias abiertas (listado paginado).
-        $perpage = 50;
-        $issuescoursesparams = [];
-        $issuescourseswhere = 'i.resolvedat IS NULL';
-        $issuescoursesjoin = '';
-        if ($categoryid) {
-            $issuescoursesjoin = ' JOIN {course_categories} cc ON cc.id = c.category';
-            $issuescourseswhere .= ' AND c.category = :categoryid_ic';
-            $issuescoursesparams['categoryid_ic'] = $categoryid;
-        } else if (!empty($allowedids)) {
-            $issuescoursesjoin = ' JOIN {course_categories} cc ON cc.id = c.category';
-            $issuescourseswhere .= ' AND c.category IN (' . implode(',', $allowedids) . ')';
-        }
-        if ($validation !== '') {
-            $issuescourseswhere .= ' AND i.validation = :validation_ic';
-            $issuescoursesparams['validation_ic'] = $validation;
-        }
-        if ($semester !== '') {
-            $issuescourseswhere .= ' ' . $semestersql;
-            $issuescoursesparams = $issuescoursesparams + $semesterparams;
-        }
-
-        $totalcoursesWithIssues = $DB->get_field_sql("
-            SELECT COUNT(1) FROM (
-                SELECT i.courseid
-                  FROM {block_validacursos_issues} i
-                  JOIN {course} c ON c.id = i.courseid
-                  $issuescoursesjoin
-                 WHERE $issuescourseswhere $metaexclude_i
-              GROUP BY i.courseid
-            ) subq
-        ", $issuescoursesparams);
-
-        $courseswithissueslist = $DB->get_records_sql("
-            SELECT i.courseid, c.fullname AS coursename, c.visible, COUNT(1) AS issues
-              FROM {block_validacursos_issues} i
-              JOIN {course} c ON c.id = i.courseid
-              $issuescoursesjoin
-             WHERE $issuescourseswhere $metaexclude_i
-          GROUP BY i.courseid, c.fullname, c.visible
-          ORDER BY issues DESC, c.fullname ASC
-        ", $issuescoursesparams, $page * $perpage, $perpage);
-
-        if ($courseswithissueslist) {
-            $rows = [];
-            foreach ($courseswithissueslist as $cw) {
-                $courseurl = new moodle_url('/course/view.php', ['id' => $cw->courseid]);
-                $attrs = empty($cw->visible) ? ['class' => 'dimmed_text'] : [];
-                $rows[] = html_writer::tag('tr',
-                    html_writer::tag('td', html_writer::link($courseurl, format_string($cw->coursename), $attrs)) .
-                    html_writer::tag('td', (int)$cw->issues, ['style' => 'text-align:right'])
-                );
-            }
-            $tablehtml = html_writer::tag('table',
-                html_writer::tag('thead', html_writer::tag('tr',
-                    html_writer::tag('th', get_string('course')) .
-                    html_writer::tag('th', get_string('issues', 'block_validacursos'), ['style' => 'text-align:right'])
-                )) .
-                html_writer::tag('tbody', implode('', $rows)),
-                ['class' => 'generaltable boxaligncenter', 'style' => 'margin-top: .5rem;']
-            );
-            echo html_writer::tag('div', $tablehtml, ['class' => 'box generalbox mb-3']);
-            $pagingurl = new moodle_url('/blocks/validacursos/report.php', $tabparams + ['tab' => 'issues']);
-            echo $OUTPUT->paging_bar($totalcoursesWithIssues, $page, $perpage, $pagingurl);
-        } else {
-            echo html_writer::div(get_string('coursesnoissues', 'block_validacursos'), 'alert alert-success');
-        }
-
-    } else if ($tab === 'ok') {
-        // Selector de descarga estándar Moodle.
-        $downloadparamsok = ['tab' => 'ok', 'show' => $show] + $filterparams;
-        echo $OUTPUT->download_dataformat_selector(
-            get_string('downloadas', 'table'),
-            '/blocks/validacursos/report.php',
-            'download',
-            $downloadparamsok
-        );
-
-        // Cursos sin incidencias abiertas (listado paginado).
-        $perpage = 50;
-        $okparams = [];
-        $okwhere = 'c.id != ' . SITEID;
-        if ($categoryid) {
-            $okwhere .= ' AND c.category = :categoryid_ok';
-            $okparams['categoryid_ok'] = $categoryid;
-        } else if (!empty($allowedids)) {
-            $okwhere .= ' AND c.category IN (' . implode(',', $allowedids) . ')';
-        }
-        if ($semester !== '') {
-            $okwhere .= ' ' . $semestersql;
-            $okparams = $okparams + $semesterparams;
-        }
-
-        $totalcoursesok = $DB->get_field_sql("
-            SELECT COUNT(1)
-              FROM {course} c
-             WHERE $okwhere $metaexclude_c
-               AND c.id NOT IN (
-                   SELECT DISTINCT i.courseid
-                     FROM {block_validacursos_issues} i
-                    WHERE i.resolvedat IS NULL
-               )
-        ", $okparams);
-
-        $coursesok = $DB->get_records_sql("
-            SELECT c.id AS courseid, c.fullname AS coursename, c.visible
-              FROM {course} c
-             WHERE $okwhere $metaexclude_c
-               AND c.id NOT IN (
-                   SELECT DISTINCT i.courseid
-                     FROM {block_validacursos_issues} i
-                    WHERE i.resolvedat IS NULL
-               )
-          ORDER BY c.fullname ASC
-        ", $okparams, $page * $perpage, $perpage);
-
-        if ($coursesok) {
-            $rows = [];
-            foreach ($coursesok as $co) {
-                $courseurl = new moodle_url('/course/view.php', ['id' => $co->courseid]);
-                $attrs = empty($co->visible) ? ['class' => 'dimmed_text'] : [];
-                $rows[] = html_writer::tag('tr',
-                    html_writer::tag('td', html_writer::link($courseurl, format_string($co->coursename), $attrs))
-                );
-            }
-            $tablehtml = html_writer::tag('table',
-                html_writer::tag('thead', html_writer::tag('tr',
-                    html_writer::tag('th', get_string('course'))
-                )) .
-                html_writer::tag('tbody', implode('', $rows)),
-                ['class' => 'generaltable boxaligncenter', 'style' => 'margin-top: .5rem;']
-            );
-            echo html_writer::tag('div', $tablehtml, ['class' => 'box generalbox mb-3']);
-            $pagingurlok = new moodle_url('/blocks/validacursos/report.php', $tabparams + ['tab' => 'ok']);
-            echo $OUTPUT->paging_bar($totalcoursesok, $page, $perpage, $pagingurlok);
-        } else {
-            echo html_writer::div(get_string('nocoursesok', 'block_validacursos'), 'alert alert-warning');
-        }
-
-    } else if ($tab === 'validations') {
-        // La tabla SQL muestra su propio selector de descarga.
-    }
 }
 
-// Tabla paginada (o CSV si download=csv) — solo en pestaña validations.
-if ($tab === 'validations' || $table->is_downloading()) {
-    $table->out(50, true);
-}
+// Renderizar la tabla activa (funciona tanto para descarga como para visualización).
+$activetable->out(50, true);
 
-if (!$table->is_downloading()) {
+if (!$downloading) {
     echo $OUTPUT->footer();
 }
