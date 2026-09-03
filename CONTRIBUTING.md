@@ -17,3 +17,13 @@ Los commits tienen que seguir [Conventional Commits](https://www.conventionalcom
 Tras un `feat`/`fix` en `master`, release-please abre un PR `chore(master): release X.Y.Z`, lo fusiona y (con un push de trigger) publica el tag `vX.Y.Z` y el ZIP instalable.
 
 El ZIP lleva la carpeta `validacursos/` (nombre Moodle del bloque) y un `$plugin->version` mayor que el anterior para forzar upgrade.
+
+## CI
+
+GitHub Actions (`Moodle Plugin CI`) corre en cada push/PR a `master`:
+
+- sintaxis PHP 8.1–8.4
+- moodle-plugin-ci: phplint, phpcpd, validate, savepoints en Moodle 4.5 y 5.2 (pgsql y mariadb)
+- PHPUnit si existe `tests/`
+
+Code Checker y PHPDoc no están en la matriz todavía: el árbol actual tiene cientos de avisos Moodle CS (sobre todo variables `snake_case`). Los PRs de release-please no lanzan esta workflow.

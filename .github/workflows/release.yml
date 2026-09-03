@@ -28,6 +28,17 @@ jobs:
                 --head "release-please--branches--master" \
                 --state open --json number --jq '.[0].number')
           if [ -n "$PR" ] && [ "$PR" != "null" ]; then
+            echo "Cancelling Moodle Plugin CI on the release-please branch"
+            for status in queued in_progress; do
+              gh run list --repo "$GITHUB_REPOSITORY" \
+                --branch release-please--branches--master \
+                --workflow "Moodle Plugin CI" \
+                --status "$status" \
+                --json databaseId \
+                --jq '.[].databaseId' | while read -r id; do
+                  [ -n "$id" ] && gh run cancel "$id" --repo "$GITHUB_REPOSITORY" || true
+                done
+            done
             echo "Merging release PR #$PR"
             gh pr merge "$PR" --repo "$GITHUB_REPOSITORY" --merge
           else
