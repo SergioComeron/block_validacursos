@@ -24,7 +24,7 @@
 
 defined('MOODLE_INTERNAL') || die();
 
-require_once(__DIR__ . '/classes/admin_setting_configdate.php');
+use block_validacursos\admin_setting_configdate;
 
 if ($hassiteconfig) {
     // No crear ni añadir la página: $settings ya lo hace Moodle.

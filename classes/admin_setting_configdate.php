@@ -14,90 +14,128 @@
 // You should have received a copy of the GNU General Public License
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
+/**
+ * Admin setting with Moodle's date/time calendar picker.
+ *
+ * @package    block_validacursos
+ * @copyright  2025 Sergio Comerón <info@sergiocomeron.com>
+ * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
+ */
+
+namespace block_validacursos;
+
 defined('MOODLE_INTERNAL') || die();
 
+/**
+ * Admin setting that stores a unix timestamp and uses the core calendar picker.
+ */
 class admin_setting_configdate extends \admin_setting {
+
+    /**
+     * Current value as unix timestamp.
+     *
+     * @return int
+     */
     public function get_setting() {
         $value = $this->config_read($this->name);
         return is_numeric($value) ? (int)$value : 0;
     }
 
+    /**
+     * Save the posted day/month/year/hour/minute as a unix timestamp.
+     *
+     * @param array|int|string $data
+     * @return string Empty string on success, error string otherwise.
+     */
     public function write_setting($data) {
-        // Si es array, intenta construir el timestamp.
         if (is_array($data)) {
-            // Verifica que todas las claves existen.
-            $year    = isset($data['year'])    ? (int)$data['year']    : 0;
-            $mon     = isset($data['mon'])     ? (int)$data['mon']     : 0;
-            $mday    = isset($data['mday'])    ? (int)$data['mday']    : 0;
-            $hours   = isset($data['hours'])   ? (int)$data['hours']   : 0;
-            $minutes = isset($data['minutes']) ? (int)$data['minutes'] : 0;
-            if ($year && $mon && $mday) {
-                $timestamp = make_timestamp($year, $mon, $mday, $hours, $minutes);
-            } else {
+            $year = (int)($data['year'] ?? 0);
+            $month = (int)($data['month'] ?? $data['mon'] ?? 0);
+            $day = (int)($data['day'] ?? $data['mday'] ?? 0);
+            $hour = (int)($data['hour'] ?? $data['hours'] ?? 0);
+            $minute = (int)($data['minute'] ?? $data['minutes'] ?? 0);
+            if (!$year || !$month || !$day) {
                 return get_string('errorsetting', 'admin');
             }
+            $timestamp = make_timestamp($year, $month, $day, $hour, $minute);
         } else if (is_numeric($data)) {
-            // Si es un timestamp, úsalo directamente.
             $timestamp = (int)$data;
         } else {
-            // Si los datos no son válidos, no guardar nada.
             return get_string('errorsetting', 'admin');
         }
-        $result = $this->config_write($this->name, $timestamp);
-        return $result ? '' : get_string('errorsetting', 'admin');
+
+        return $this->config_write($this->name, $timestamp) ? '' : get_string('errorsetting', 'admin');
     }
 
-    public function output_html($data, $query='') {
+    /**
+     * Render Moodle's date_time_selector (dropdowns + calendar button).
+     *
+     * @param mixed $data Current value (timestamp or posted array).
+     * @param string $query
+     * @return string
+     */
+    public function output_html($data, $query = '') {
+        global $OUTPUT, $CFG;
+
+        require_once($CFG->libdir . '/formslib.php');
+        form_init_date_js();
+
         $default = $this->get_defaultsetting();
-        if ($default) {
-            $defaultinfo = userdate($default, get_string('strftimedatetime', 'langconfig'));
+        $defaultinfo = $default ? userdate($default, get_string('strftimedatetime', 'langconfig')) : '';
+
+        if (is_array($data)) {
+            $year = (int)($data['year'] ?? 0);
+            $month = (int)($data['month'] ?? $data['mon'] ?? 0);
+            $day = (int)($data['day'] ?? $data['mday'] ?? 0);
+            $hour = (int)($data['hour'] ?? $data['hours'] ?? 0);
+            $minute = (int)($data['minute'] ?? $data['minutes'] ?? 0);
+            $timestamp = ($year && $month && $day) ? make_timestamp($year, $month, $day, $hour, $minute) : time();
         } else {
-            $defaultinfo = '';
+            $timestamp = (empty($data) || !is_numeric($data)) ? time() : (int)$data;
         }
 
-        // Asegurarse de que $data sea un timestamp válido.
-        if (empty($data) || !is_numeric($data)) {
-            $data = time();
-        }
-
-        if (!is_array($data)) {
-            $data = usergetdate($data);
-        }
-
-        $yearnow = (int)userdate(time(), '%Y');
-        $monnames = [];
-        for ($m = 1; $m <= 12; $m++) {
-            $monnames[$m] = userdate(gmmktime(12, 0, 0, $m, 15, 2000), '%B');
-        }
-
-        $opts = [
-            'mday'   => range(1, 31),
-            'mon'    => $monnames,
-            'year'   => range($yearnow - 2, $yearnow + 10),
-            ' '      => ' ',
-            'hours'  => range(0, 23),
-            ':'      => ':',
-            'minutes'=> range(0, 59)
+        $parts = usergetdate($timestamp);
+        $selected = [
+            'day' => (int)$parts['mday'],
+            'month' => (int)$parts['mon'],
+            'year' => (int)$parts['year'],
+            'hour' => (int)$parts['hours'],
+            'minute' => (int)$parts['minutes'],
         ];
 
-        $output = '';
-        foreach ($opts as $type => $choices) {
-            if (!is_array($choices)) {
-                $output .= $choices;
-                continue;
-            }
-            if ($type !== 'mon') {
-                $choices = array_combine($choices, $choices);
-            }
-            if ($type === 'hours' || $type === 'minutes') {
-                $choices = array_map(function($n) { return sprintf('%02d', $n); }, $choices);
-            }
-            $selectname = $this->get_full_name() . "[$type]";
-            $output .= html_writer::select($choices, $selectname, $data[$type], null);
-        }
-        $output = html_writer::tag('div', $output, ['class' => 'form-date defaultsnext']);
+        $calendartype = \core_calendar\type_factory::get_calendar_instance();
+        $dateorder = $calendartype->get_date_order($calendartype->get_min_year(), $calendartype->get_max_year());
+        $fullname = $this->get_full_name();
+        $selectattrs = ['class' => 'form-select d-inline-block me-1'];
 
-        return format_admin_setting($this, $this->visiblename, $output,
-            $this->description, false, '', $defaultinfo, $query);
+        $html = '';
+        foreach ($dateorder as $key => $options) {
+            $html .= \html_writer::select($options, $fullname . '[' . $key . ']', $selected[$key], false, $selectattrs);
+        }
+
+        $hours = [];
+        for ($i = 0; $i <= 23; $i++) {
+            $hours[$i] = sprintf('%02d', $i);
+        }
+        $minutes = [];
+        for ($i = 0; $i < 60; $i++) {
+            $minutes[$i] = sprintf('%02d', $i);
+        }
+        $html .= \html_writer::select($hours, $fullname . '[hour]', $selected['hour'], false, $selectattrs);
+        $html .= \html_writer::select($minutes, $fullname . '[minute]', $selected['minute'], false, $selectattrs);
+
+        if ($calendartype->get_name() === 'gregorian') {
+            $html .= \html_writer::tag('button', $OUTPUT->pix_icon('i/calendar', ''), [
+                'type' => 'button',
+                'name' => $fullname . '[calendar]',
+                'title' => get_string('datepicker', 'calendar'),
+                'aria-label' => get_string('datepicker', 'calendar'),
+                'class' => 'btn btn-link btn-sm icon-no-margin',
+            ]);
+        }
+
+        $html = \html_writer::div($html, 'fdate_time_selector d-flex flex-wrap align-items-center defaultsnext');
+
+        return format_admin_setting($this, $this->visiblename, $html, $this->description, false, '', $defaultinfo, $query);
     }
 }
