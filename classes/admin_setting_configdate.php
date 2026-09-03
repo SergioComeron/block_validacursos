@@ -125,8 +125,11 @@ class admin_setting_configdate extends \admin_setting {
         $html .= \html_writer::select($minutes, $fullname . '[minute]', $selected['minute'], false, $selectattrs);
 
         if ($calendartype->get_name() === 'gregorian') {
+            // Unique id is required: Moodle's dateselector JS does getElementById
+            // on the button; a missing/duplicate id throws and skips later pickers.
             $html .= \html_writer::tag('button', $OUTPUT->pix_icon('i/calendar', ''), [
                 'type' => 'button',
+                'id' => $this->get_id() . '_calendar',
                 'name' => $fullname . '[calendar]',
                 'title' => get_string('datepicker', 'calendar'),
                 'aria-label' => get_string('datepicker', 'calendar'),
