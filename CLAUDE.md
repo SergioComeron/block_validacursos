@@ -12,7 +12,9 @@ Plugin de tipo bloque para Moodle (`block_validacursos`) que valida automáticam
 
 Este es un plugin PHP puro sin dependencias externas (no hay package.json, ni Composer). Se desarrolla dentro de una instalación Moodle completa en `blocks/validacursos/`.
 
-No hay tests automatizados, ni linter configurado, ni sistema de build propio. Para verificar cambios:
+Hay `phpcs.xml` y hook `scripts/pre-push`. Los releases los genera release-please en `master` (ver `CONTRIBUTING.md`): commits `feat:`/`fix:`, PR automático, ZIP en GitHub Releases. `$plugin->release` lo pisa release-please; `$plugin->version` lo incrementa el workflow del ZIP.
+
+Para verificar cambios:
 - Probar directamente en un curso Moodle con el bloque añadido.
 - Comprobar el reporte de incidencias en `/blocks/validacursos/report.php`.
 - Si se modifica `db/install.xml` o `db/upgrade.php`, incrementar la versión en `version.php` y ejecutar la actualización de Moodle.

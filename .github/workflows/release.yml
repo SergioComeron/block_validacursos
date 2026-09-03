@@ -1,0 +1,86 @@
+name: Release Please
+
+on:
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-22.04
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name:        ${{ steps.release.outputs.tag_name }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          config-file:   release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+      - name: Auto-merge release PR
+        run: |
+          PR=$(gh pr list --repo "$GITHUB_REPOSITORY" \
+                --head "release-please--branches--master" \
+                --state open --json number --jq '.[0].number')
+          if [ -n "$PR" ] && [ "$PR" != "null" ]; then
+            echo "Merging release PR #$PR"
+            gh pr merge "$PR" --repo "$GITHUB_REPOSITORY" --merge
+          else
+            echo "No open release PR found"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-zip:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created }}
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: validacursos
+
+      - name: Bump Moodle plugin version (never go backwards)
+        run: |
+          CURRENT=$(grep -E '\$plugin->version' validacursos/version.php | grep -oE '[0-9]{10}' | head -1)
+          TODAY00=$(date +%Y%m%d)00
+          if [ -z "$CURRENT" ]; then
+            NEW="$TODAY00"
+          elif [ "$CURRENT" -ge "$TODAY00" ]; then
+            NEW=$((CURRENT + 1))
+          else
+            NEW="$TODAY00"
+          fi
+          sed -i "s/\$plugin->version.*=.*;/\$plugin->version      = ${NEW};/" validacursos/version.php
+          echo "Moodle \$plugin->version set to ${NEW} (was ${CURRENT:-none})"
+
+      - name: Build installable ZIP
+        run: |
+          TAG="${{ needs.release-please.outputs.tag_name }}"
+          ZIPNAME="block_validacursos-${TAG}.zip"
+          zip -r "$ZIPNAME" validacursos \
+            --exclude "validacursos/.git/*" \
+            --exclude "validacursos/.github/*" \
+            --exclude "validacursos/.gitignore" \
+            --exclude "validacursos/.gitattributes" \
+            --exclude "validacursos/CLAUDE.md" \
+            --exclude "validacursos/CONTRIBUTING.md" \
+            --exclude "validacursos/composer.json" \
+            --exclude "validacursos/composer.lock" \
+            --exclude "validacursos/phpcs.xml" \
+            --exclude "validacursos/phpunit.xml" \
+            --exclude "validacursos/scripts/*" \
+            --exclude "validacursos/vendor/*" \
+            --exclude "validacursos/release-please-config.json" \
+            --exclude "validacursos/.release-please-manifest.json"
+
+      - name: Attach ZIP to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.release-please.outputs.tag_name }}
+          files: "*.zip"
