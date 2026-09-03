@@ -44,39 +44,37 @@ class block_validacursos extends block_base {
     }
 
     /**
-     * Crea un foro de tutorías de la asignatura en la sección 0 del curso si no existe.
+     * Crea un foro en la sección 0 y lo añade a la secuencia del curso.
      *
-     * @param object $course
-     * @return bool|int Devuelve el id del foro creado o false si falla.
+     * @param stdClass $course
+     * @param string $type Tipo de foro Moodle (general, news, …).
+     * @param string $name
+     * @param string $intro
+     * @return int Id del foro creado.
      */
-    private function crear_foro_tutorias($course) {
-        global $DB, $USER;
+    private function crear_foro_seccion0($course, $type, $name, $intro) {
+        global $DB;
 
-        // Obtener la sección 0
         $section0 = $DB->get_record('course_sections', ['course' => $course->id, 'section' => 0], '*', MUST_EXIST);
 
-        // Crear el foro
         $forum = new stdClass();
         $forum->course = $course->id;
-        $forum->type = 'general';
-        $forum->name = 'Foro de tutorías de la asignatura';
-        $forum->intro = 'Foro para tutorías de la asignatura.';
+        $forum->type = $type;
+        $forum->name = $name;
+        $forum->intro = $intro;
         $forum->introformat = FORMAT_HTML;
         $forum->assessed = 0;
         $forum->forcesubscribe = 1;
         $forum->trackingtype = 1;
         $forum->timemodified = time();
         $forum->timecreated = time();
-
         $forumid = $DB->insert_record('forum', $forum);
 
-        // Obtener el id del módulo forum
-        $forum_module_id = $DB->get_field('modules', 'id', ['name' => 'forum'], MUST_EXIST);
+        $forummoduleid = $DB->get_field('modules', 'id', ['name' => 'forum'], MUST_EXIST);
 
-        // Crear el course_module
         $cm = new stdClass();
         $cm->course = $course->id;
-        $cm->module = $forum_module_id;
+        $cm->module = $forummoduleid;
         $cm->instance = $forumid;
         $cm->section = $section0->id;
         $cm->added = time();
@@ -91,15 +89,27 @@ class block_validacursos extends block_base {
         $cm->showdescription = 0;
         $cmid = $DB->insert_record('course_modules', $cm);
 
-        // Añadir el módulo a la sección 0
         $sequence = trim($section0->sequence);
         $sequence = $sequence ? $sequence . ',' . $cmid : $cmid;
         $DB->set_field('course_sections', 'sequence', $sequence, ['id' => $section0->id]);
-
-        // Actualizar el campo modinfo del curso
         rebuild_course_cache($course->id, true);
 
         return $forumid;
+    }
+
+    /**
+     * Crea un foro de tutorías de la asignatura en la sección 0 del curso si no existe.
+     *
+     * @param object $course
+     * @return bool|int Devuelve el id del foro creado o false si falla.
+     */
+    private function crear_foro_tutorias($course) {
+        return $this->crear_foro_seccion0(
+            $course,
+            'general',
+            'Foro de tutorías de la asignatura',
+            'Foro para tutorías de la asignatura.'
+        );
     }
 
     /**
@@ -109,56 +119,12 @@ class block_validacursos extends block_base {
      * @return bool|int Devuelve el id del foro creado o false si falla.
      */
     private function crear_foro_estudiantes($course) {
-        global $DB, $USER;
-
-        // Obtener la sección 0
-        $section0 = $DB->get_record('course_sections', ['course' => $course->id, 'section' => 0], '*', MUST_EXIST);
-
-        // Crear el foro
-        $forum = new stdClass();
-        $forum->course = $course->id;
-        $forum->type = 'general';
-        $forum->name = 'Foro de comunicación entre estudiantes';
-        $forum->intro = 'Foro para la comunicación entre estudiantes.';
-        $forum->introformat = FORMAT_HTML;
-        $forum->assessed = 0;
-        $forum->forcesubscribe = 1;
-        $forum->trackingtype = 1;
-        $forum->timemodified = time();
-        $forum->timecreated = time();
-
-        $forumid = $DB->insert_record('forum', $forum);
-
-        // Obtener el id del módulo forum
-        $forum_module_id = $DB->get_field('modules', 'id', ['name' => 'forum'], MUST_EXIST);
-
-        // Crear el course_module
-        $cm = new stdClass();
-        $cm->course = $course->id;
-        $cm->module = $forum_module_id;
-        $cm->instance = $forumid;
-        $cm->section = $section0->id;
-        $cm->added = time();
-        $cm->visible = 1;
-        $cm->visibleold = 1;
-        $cm->groupmode = 0;
-        $cm->groupingid = 0;
-        $cm->completion = 0;
-        $cm->completiongradeitemnumber = null;
-        $cm->completionview = 0;
-        $cm->completionexpected = 0;
-        $cm->showdescription = 0;
-        $cmid = $DB->insert_record('course_modules', $cm);
-
-        // Añadir el módulo a la sección 0
-        $sequence = trim($section0->sequence);
-        $sequence = $sequence ? $sequence . ',' . $cmid : $cmid;
-        $DB->set_field('course_sections', 'sequence', $sequence, ['id' => $section0->id]);
-
-        // Actualizar el campo modinfo del curso
-        rebuild_course_cache($course->id, true);
-
-        return $forumid;
+        return $this->crear_foro_seccion0(
+            $course,
+            'general',
+            'Foro de comunicación entre estudiantes',
+            'Foro para la comunicación entre estudiantes.'
+        );
     }
 
     /**
