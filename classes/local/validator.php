@@ -38,6 +38,245 @@ class validator {
 
         $validaciones = [];
 
+        // Validación: el curso debe tener un bloque del tipo "bloquecero" en la región "content-upper"
+        // (región extra que aporta el tema Boost Union, no la "side-pre" estándar de Moodle).
+        $regionesperada = 'content-upper';
+        $coursecontext = \context_course::instance($course->id);
+        $bloquecero_instancias = $DB->get_records('block_instances', [
+            'blockname' => 'bloquecero',
+            'parentcontextid' => $coursecontext->id,
+        ]);
+
+        $bloquecero_existe = !empty($bloquecero_instancias);
+        $bloquecero_region_detectada = '';
+        $bloquecero_en_header = false;
+
+        // Configuración serializada del bloque cero (primera instancia), reutilizada por varias validaciones.
+        // Si no hay bloque o la config está vacía, queda como objeto vacío.
+        $bcconfig = new \stdClass();
+        $bloquecero_instanceid = 0;
+        if ($bloquecero_existe) {
+            $bcprimera = reset($bloquecero_instancias);
+            $bloquecero_instanceid = (int)$bcprimera->id;
+            if (!empty($bcprimera->configdata)) {
+                $bcdecoded = unserialize(base64_decode($bcprimera->configdata));
+                if (is_object($bcdecoded)) {
+                    $bcconfig = $bcdecoded;
+                }
+            }
+        }
+
+        $bloquecero_tiene_override = false;
+        foreach ($bloquecero_instancias as $bi) {
+            // Misma regla que cli/add_block_to_category.php de bloquecero:
+            // defaultregion debe ser content-upper y no puede haber sobreescrituras en otra región.
+            $overridesotras = $DB->get_records_select(
+                'block_positions',
+                'blockinstanceid = :biid AND region <> :region',
+                ['biid' => $bi->id, 'region' => $regionesperada]
+            );
+            if ($bloquecero_region_detectada === '') {
+                $bloquecero_region_detectada = $bi->defaultregion;
+            }
+            if ($bi->defaultregion === $regionesperada && empty($overridesotras)) {
+                $bloquecero_en_header = true;
+                $bloquecero_region_detectada = $bi->defaultregion;
+                break;
+            }
+            if (!empty($overridesotras)) {
+                $bloquecero_tiene_override = true;
+                $primeraoverride = reset($overridesotras);
+                $bloquecero_region_detectada = $primeraoverride->region;
+            }
+        }
+
+        if (!$bloquecero_existe) {
+            $estado_detalle = 'No encontrado. Añadir el bloque "Bloque cero" al curso en la región "' . $regionesperada . '".';
+        } else if ($bloquecero_en_header) {
+            $estado_detalle = 'Añadido en la región "' . $regionesperada . '"';
+        } else if ($bloquecero_tiene_override) {
+            $estado_detalle = 'Añadido, pero hay una sobreescritura de página en la región "'
+                . $bloquecero_region_detectada . '" en lugar de "' . $regionesperada
+                . '". Mover el bloque a la región "' . $regionesperada . '".';
+        } else {
+            $estado_detalle = 'Añadido, pero en la región "' . $bloquecero_region_detectada
+                . '" en lugar de "' . $regionesperada . '". Mover el bloque a la región "' . $regionesperada . '".';
+        }
+
+        $validaciones[] = [
+            'nombre' => 'Bloque cero',
+            'estado' => $bloquecero_en_header,
+            'mensaje' => $bloquecero_en_header
+                ? 'El curso tiene el bloque cero en la región correcta'
+                : 'El curso NO tiene el bloque cero en la región correcta',
+            'detalle' => [
+                'Región requerida' => $regionesperada,
+                'Estado' => $estado_detalle,
+                // Datos internos: permiten al bloque ofrecer los botones de añadir (si no existe)
+                // o mover a la región correcta (si existe pero está mal ubicado).
+                '_existe' => $bloquecero_existe ? 1 : 0,
+                '_blockinstanceid' => $bloquecero_instanceid,
+            ]
+        ];
+
+        // Validación: cada profesor mostrado en el bloque cero debe tener teléfono y horario rellenos.
+        // Los datos se guardan en la configuración serializada del bloque con las claves dinámicas
+        // userphone_<userid> y userschedule_<userid>. El alcance son los profesores seleccionados
+        // (teacher_selected_<userid>); si no hay ninguna selección, se consideran todos los editing teachers.
+        $datosprofes_detalle = [];
+        $datosprofes_ok = true;
+
+        if (!$bloquecero_existe) {
+            $datosprofes_ok = false;
+            $datosprofes_detalle['Estado'] = 'No existe el bloque cero en el curso, no se pueden validar los datos de profesores.';
+        } else {
+            // Profesores del curso (mismos que lista el bloque cero: capacidad moodle/course:update).
+            $profesores = get_enrolled_users($coursecontext, 'moodle/course:update');
+
+            // ¿Hay selección explícita de profesores?
+            $hayseleccion = false;
+            foreach ($bcconfig as $clave => $valor) {
+                if (strpos($clave, 'teacher_selected_') === 0 && !empty($valor)) {
+                    $hayseleccion = true;
+                    break;
+                }
+            }
+
+            $profesores_en_alcance = 0;
+            foreach ($profesores as $profesor) {
+                // Si hay selección, solo se valida a los profesores marcados.
+                if ($hayseleccion && empty($bcconfig->{'teacher_selected_' . $profesor->id})) {
+                    continue;
+                }
+                $profesores_en_alcance++;
+
+                // Teléfono.
+                $phonekey = 'userphone_' . $profesor->id;
+                $phone = isset($bcconfig->$phonekey) ? trim((string)$bcconfig->$phonekey) : '';
+
+                // Horario (puede ser un editor: array con 'text', o una cadena).
+                $schedulekey = 'userschedule_' . $profesor->id;
+                $scheduleval = $bcconfig->$schedulekey ?? null;
+                if (is_array($scheduleval)) {
+                    $schedule = isset($scheduleval['text']) ? $scheduleval['text'] : '';
+                } else {
+                    $schedule = is_string($scheduleval) ? $scheduleval : '';
+                }
+                $schedule = trim(strip_tags($schedule));
+
+                $faltantes = [];
+                if ($phone === '') {
+                    $faltantes[] = 'teléfono';
+                }
+                if ($schedule === '') {
+                    $faltantes[] = 'horario';
+                }
+
+                if (!empty($faltantes)) {
+                    $datosprofes_ok = false;
+                    $datosprofes_detalle[fullname($profesor)] = 'Falta rellenar: ' . implode(' y ', $faltantes);
+                }
+            }
+
+            if ($profesores_en_alcance === 0) {
+                $datosprofes_detalle['Estado'] = 'No hay profesores que validar en el bloque cero.';
+            } else if ($datosprofes_ok) {
+                $datosprofes_detalle['Estado'] = 'Todos los profesores tienen teléfono y horario rellenos.';
+            }
+        }
+
+        $validaciones[] = [
+            'nombre' => 'Datos de profesores en bloque cero',
+            'estado' => $datosprofes_ok,
+            'mensaje' => $datosprofes_ok
+                ? 'Todos los profesores tienen sus datos en el bloque cero'
+                : 'Hay profesores sin datos completos en el bloque cero',
+            'detalle' => $datosprofes_detalle,
+        ];
+
+        // Validación: el bloque cero debe tener al menos una guía docente.
+        // Las guías se guardan en block_bloquecero_guides filtradas por blockinstanceid y courseid.
+        $guias_detalle = [];
+        if (!$bloquecero_existe) {
+            $guias_ok = false;
+            $guias_detalle['Estado'] = 'No existe el bloque cero en el curso, no se pueden validar las guías docentes.';
+        } else {
+            $numguias = 0;
+            foreach ($bloquecero_instancias as $bi) {
+                $numguias += $DB->count_records('block_bloquecero_guides', [
+                    'blockinstanceid' => $bi->id,
+                    'courseid' => $course->id,
+                ]);
+            }
+            $guias_ok = $numguias > 0;
+            $guias_detalle['Guías docentes'] = $numguias;
+            $guias_detalle['Estado'] = $guias_ok
+                ? 'El bloque cero tiene al menos una guía docente.'
+                : 'No hay ninguna guía docente. Añadir al menos una en el bloque cero.';
+        }
+
+        $validaciones[] = [
+            'nombre' => 'Guía docente en bloque cero',
+            'estado' => $guias_ok,
+            'mensaje' => $guias_ok
+                ? 'El bloque cero tiene guía docente'
+                : 'El bloque cero NO tiene ninguna guía docente',
+            'detalle' => $guias_detalle,
+        ];
+
+        // Validación: el bloque cero debe tener al menos una sesión en directo registrada
+        // (block_bloquecero_sessions) y todas deben caer dentro del periodo del curso
+        // (inicio sessiondate y fin sessiondate+duration entre course->startdate y course->enddate).
+        $sesiones_detalle = [];
+        if (!$bloquecero_existe) {
+            $sesiones_ok = false;
+            $sesiones_detalle['Estado'] = 'No existe el bloque cero en el curso, no se pueden validar las sesiones.';
+        } else if (empty($course->startdate) || empty($course->enddate)) {
+            $sesiones_ok = false;
+            $sesiones_detalle['Estado'] = 'El curso no tiene fechas de inicio y fin definidas; no se puede validar el periodo.';
+        } else {
+            $sesiones = [];
+            foreach ($bloquecero_instancias as $bi) {
+                $sesiones += $DB->get_records('block_bloquecero_sessions', [
+                    'blockinstanceid' => $bi->id,
+                    'courseid' => $course->id,
+                ]);
+            }
+
+            $numsesiones = count($sesiones);
+            $fuera_de_rango = [];
+            foreach ($sesiones as $s) {
+                $inicio = (int)$s->sessiondate;
+                $fin = $inicio + (int)($s->duration ?? 0);
+                if ($inicio < (int)$course->startdate || $fin > (int)$course->enddate) {
+                    $fuera_de_rango[$s->name] = userdate($inicio);
+                }
+            }
+
+            $sesiones_ok = $numsesiones > 0 && empty($fuera_de_rango);
+            $sesiones_detalle['Sesiones'] = $numsesiones;
+            $sesiones_detalle['Periodo del curso'] = userdate($course->startdate) . ' — ' . userdate($course->enddate);
+            if ($numsesiones === 0) {
+                $sesiones_detalle['Estado'] = 'No hay ninguna sesión en directo. Añadir al menos una en el bloque cero.';
+            } else if (!empty($fuera_de_rango)) {
+                $sesiones_detalle['Estado'] = 'Hay sesiones fuera del periodo del curso.';
+                foreach ($fuera_de_rango as $nombre => $fecha) {
+                    $sesiones_detalle['Fuera de rango: ' . $nombre] = $fecha;
+                }
+            } else {
+                $sesiones_detalle['Estado'] = 'Todas las sesiones están dentro del periodo del curso.';
+            }
+        }
+
+        $validaciones[] = [
+            'nombre' => 'Sesiones en directo en bloque cero',
+            'estado' => $sesiones_ok,
+            'mensaje' => $sesiones_ok
+                ? 'El bloque cero tiene sesiones en directo válidas'
+                : 'El bloque cero NO tiene sesiones en directo válidas',
+            'detalle' => $sesiones_detalle,
+        ];
+
         // Validación fecha de inicio.
         $validafecha = !empty($course->startdate) && !empty($config->fechainiciovalidacion)
             && self::fechas_son_iguales($course->startdate, $config->fechainiciovalidacion);
@@ -88,17 +327,21 @@ class validator {
             [
                 'nombre' => 'Tablón de anuncios',
                 'type'   => 'news',
-                'titulo' => 'Tablón de anuncios'
+                'titulo' => 'Tablón de anuncios',
+                // Clave de la config del bloque cero que debe apuntar a este foro.
+                'configkey' => 'forumid'
             ],
             [
                 'nombre' => 'Foro de comunicación entre estudiantes',
                 'type'   => 'general',
-                'titulo' => 'Foro de comunicación entre estudiantes'
+                'titulo' => 'Foro de comunicación entre estudiantes',
+                'configkey' => 'forumestudiantesid'
             ],
             [
                 'nombre' => 'Foro de tutorías de la asignatura',
                 'type'   => 'general',
-                'titulo' => 'Foro de tutorías de la asignatura'
+                'titulo' => 'Foro de tutorías de la asignatura',
+                'configkey' => 'forumtutoriasid'
             ]
         ];
 
@@ -107,6 +350,7 @@ class validator {
             $foro_nombre_tipo_incorrecto = false; // Nombre coincide pero el tipo no.
             $foro_tipo_detectado = '';
             $foro_id_detectado = 0;
+            $foro_id_valido = 0; // Id del foro que cumple tipo + nombre + sección 0.
             foreach ($foros as $f) {
                 $nombre_coincide = self::normalizar_para_comparar($f->name) === self::normalizar_para_comparar($finfo['titulo']);
                 if ($nombre_coincide) {
@@ -115,6 +359,7 @@ class validator {
                         $cm = $cms_by_instance[$f->id] ?? null;
                         if ($cm && $cm->section == $section0id) {
                             $foro_ok = true;
+                            $foro_id_valido = $f->id;
                             break; // Ya está validado, salimos.
                         }
                     } else {
@@ -126,6 +371,20 @@ class validator {
                     }
                 }
             }
+
+            // Para los foros configurables en el bloque cero (p. ej. Tablón de anuncios), además
+            // de existir el foro correcto, el bloque cero debe tenerlo seleccionado en su config.
+            $config_requerida = !empty($finfo['configkey']);
+            $config_ok = true;
+            $config_forumid = 0;
+            if ($config_requerida) {
+                $ck = $finfo['configkey'];
+                $config_forumid = isset($bcconfig->$ck) ? (int)$bcconfig->$ck : 0;
+                $config_ok = $bloquecero_existe && $foro_ok
+                    && $config_forumid > 0 && $config_forumid === (int)$foro_id_valido;
+            }
+
+            $estado_final = $foro_ok && $config_ok;
 
             $estado_texto = $foro_ok ? 'Encontrado en la primera sección'
                 : ($foro_nombre_tipo_incorrecto
@@ -142,182 +401,35 @@ class validator {
                 $detalle['_forumid'] = $foro_id_detectado;
             }
 
+            // Detalle del requisito de configuración en el bloque cero.
+            if ($config_requerida) {
+                if (!$bloquecero_existe) {
+                    $detalle['Bloque cero'] = 'No existe el bloque cero donde configurar el foro.';
+                } else if (!$foro_ok) {
+                    $detalle['Bloque cero'] = 'Pendiente: primero debe existir el foro correcto en la sección 0.';
+                } else if ($config_forumid === 0) {
+                    $detalle['Bloque cero'] = 'El foro existe pero NO está seleccionado en la configuración del bloque cero.';
+                } else if ($config_forumid !== (int)$foro_id_valido) {
+                    $detalle['Bloque cero'] = 'El bloque cero tiene seleccionado otro foro (id ' . $config_forumid
+                        . ') en lugar de "' . $finfo['titulo'] . '".';
+                } else {
+                    $detalle['Bloque cero'] = 'Seleccionado correctamente en el bloque cero.';
+                }
+
+                // Datos internos para que el bloque pueda ofrecer el botón de "configurar en bloque cero".
+                $detalle['_configkey'] = $finfo['configkey'];
+                $detalle['_foro_existe'] = $foro_ok ? 1 : 0;
+                $detalle['_foro_id_valido'] = (int)$foro_id_valido;
+                $detalle['_bloquecero_instanceid'] = $bloquecero_instanceid;
+            }
+
             $validaciones[] = [
                 'nombre' => $finfo['nombre'],
-                'estado' => $foro_ok,
-                'mensaje' => $foro_ok ? 'Validado' : 'No validado',
+                'estado' => $estado_final,
+                'mensaje' => $estado_final ? 'Validado' : 'No validado',
                 'detalle' => $detalle
             ];
         }
-
-        // Validación de la existencia de la URL "Guia Docente" en el bloque cero (sección 0)
-        $guiadocente_ok = false;
-        $guiaurl = '';
-        $guiaurlok = false;
-        // Obtener todos los módulos de la sección 0
-        $section0mods = [];
-        if ($section0id) {
-            $section0mods = $DB->get_records('course_modules', ['course' => $course->id, 'section' => $section0id]);
-        }
-        if ($section0mods) {
-            // Obtener todos los recursos url del curso
-            $urls = $DB->get_records('url', ['course' => $course->id]);
-            foreach ($section0mods as $cm) {
-                if ($cm->module == $DB->get_field('modules', 'id', ['name' => 'url'])) {
-                    if (isset($urls[$cm->instance])) {
-                        $urlobj = $urls[$cm->instance];
-                        $name_normalizado = self::normalizar_para_comparar($urlobj->name);
-
-                        // Comprobar que el nombre empiece por "guia docente" (normalizado, sin tildes).
-                        if (strpos($name_normalizado, 'guia docente') === 0) {
-                            $guiadocente_ok = true;
-                            $guiaurl = (new \moodle_url('/mod/url/view.php', ['id' => $cm->id]))->out();
-                            if (strpos(trim($urlobj->externalurl), 'https://www.udima.es') === 0) {
-                                $guiaurlok = true;
-                            }
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-
-        $detalle_guia = [
-            'Nombre buscado' => 'Guía Docente (prefijo, p.e. "Guía Docente", "Guía Docente de la asignatura")',
-            'Estado' => $guiadocente_ok
-                ? ('Encontrada en la sección 0 <a href="' . $guiaurl . '" target="_blank" style="margin-left:8px;">Ver</a>')
-                : 'No encontrada en la sección 0',
-            'URL' => $guiadocente_ok
-                ? (isset($urlobj->externalurl) ? s($urlobj->externalurl) : '-')
-                : '-',
-            'Validación URL' => $guiadocente_ok
-                ? ($guiaurlok ? 'La URL es válida' : 'La URL NO es válida (debe empezar por https://www.udima.es)')
-                : '-'
-        ];
-        $validaciones[] = [
-            'nombre' => 'Guía Docente en bloque cero',
-            'estado' => $guiadocente_ok && $guiaurlok,
-            'mensaje' => ($guiadocente_ok && $guiaurlok) ? 'Guía Docente encontrada y URL válida'
-                : ($guiadocente_ok ? 'Guía Docente encontrada pero URL NO válida' : 'Guía Docente NO encontrada'),
-            'detalle' => $detalle_guia
-        ];
-
-        // Validación de datos de tutoría en bloque cero (label con claves mínimas)
-        $label_module_id = $DB->get_field('modules', 'id', ['name' => 'label'], MUST_EXIST);
-        $label_encontrado = false;
-        $claves = [
-            ['Profesor:', 'Profesora:', 'Docente:'],
-            ['Correo electrónico:', 'Correo:', 'Email:'],
-            'Teléfono',
-            'Extensión',
-            'Horario de tutorías'
-        ];
-        $faltan = $claves;
-
-        // Obtener todos los course_modules de sección 0 que sean label
-        if ($section0id) {
-            $section0mods = $DB->get_records('course_modules', [
-                'course' => $course->id,
-                'section' => $section0id,
-                'module' => $label_module_id
-            ]);
-            if ($section0mods) {
-                $label_instances = array_map(function($cm) { return $cm->instance; }, $section0mods);
-                list($in_sql, $params) = $DB->get_in_or_equal($label_instances);
-                $labels = $DB->get_records_select('label', "id $in_sql", $params);
-                foreach ($labels as $label) {
-                    $intro = self::normalizar_para_comparar(strip_tags($label->intro));
-                    $faltan_actual = [];
-                    foreach ($claves as $clave) {
-                        if (is_array($clave)) {
-                            $encontrada = false;
-                            foreach ($clave as $variante) {
-                                if (mb_strpos($intro, self::normalizar_para_comparar($variante)) !== false) {
-                                    $encontrada = true;
-                                    break;
-                                }
-                            }
-                            if (!$encontrada) {
-                                $faltan_actual[] = implode(' / ', $clave);
-                            }
-                        } else {
-                            if (mb_strpos($intro, self::normalizar_para_comparar($clave)) === false) {
-                                $faltan_actual[] = $clave;
-                            }
-                        }
-                    }
-                    if (empty($faltan_actual)) {
-                        $label_encontrado = true;
-                        $faltan = [];
-                        break;
-                    } else {
-                        // Si hay varias labels, nos quedamos con la que menos le falte
-                        if (count($faltan_actual) < count($faltan)) {
-                            $faltan = $faltan_actual;
-                        }
-                    }
-                }
-            }
-        }
-
-        $detalle_label = [
-            'Claves buscadas' => implode(', ', array_map(function($c) {
-                return is_array($c) ? '[' . implode(' | ', $c) . ']' : $c;
-            }, $claves)),
-            'Estado' => $label_encontrado ? 'Encontrado' : 'No encontrado'
-        ];
-        if (!$label_encontrado && count($faltan) > 0) {
-            $detalle_label['Faltan'] = implode(', ', array_map(function($c) {
-                return is_array($c) ? '[' . implode(' | ', $c) . ']' : $c;
-            }, $faltan));
-        }
-
-        $validaciones[] = [
-            'nombre' => 'Datos de tutoría en bloque cero',
-            'estado' => $label_encontrado,
-            'mensaje' => $label_encontrado
-                ? 'Datos de tutoría encontrados'
-                : 'No se han encontrado los datos de tutoría requeridos',
-            'detalle' => $detalle_label
-        ];
-
-        // --- NUEVAS VALIDACIONES USANDO HELPER (reemplaza las específicas anteriores) ---
-        $cronograma_actividades_ok = self::existe_label_con_tabla_y_frase(
-            $course->id,
-            $section0id,
-            'CRONOGRAMA DE ACTIVIDADES CALIFICABLES',
-            $claves // Para excluir un label que sea realmente el de tutoría.
-        );
-
-        $validaciones[] = [
-            'nombre' => 'Cronograma de actividades calificables en bloque cero',
-            'estado' => $cronograma_actividades_ok,
-            'mensaje' => $cronograma_actividades_ok
-                ? 'Cronograma encontrado'
-                : 'No se ha encontrado el cronograma en la sección 0',
-            'detalle' => [
-                'Requisito' => 'Label en sección 0 con tabla y texto: CRONOGRAMA DE ACTIVIDADES CALIFICABLES'
-            ]
-        ];
-
-        $cronograma_sesiones_ok = self::existe_label_con_tabla_y_frase(
-            $course->id,
-            $section0id,
-            'CRONOGRAMA DE SESIONES SÍNCRONAS',
-            $claves
-        );
-
-        $validaciones[] = [
-            'nombre' => 'Cronograma de sesiones síncronas en bloque cero',
-            'estado' => $cronograma_sesiones_ok,
-            'mensaje' => $cronograma_sesiones_ok
-                ? 'Cronograma de sesiones encontrado'
-                : 'No se ha encontrado el cronograma de sesiones en la sección 0',
-            'detalle' => [
-                'Requisito' => 'Label en sección 0 con tabla y texto: CRONOGRAMA DE SESIONES SÍNCRONAS'
-            ]
-        ];
-        // --- FIN NUEVAS VALIDACIONES ---
 
         // Validación de categorías del calificador.
         $categorias_requeridas = [
@@ -619,105 +731,4 @@ class validator {
         return rtrim(self::quitar_tildes(core_text::strtolower(trim($texto))), '.');
     }
 
-    /**
-     * Helper: normaliza texto HTML (elimina etiquetas, decodifica entidades y comprime espacios).
-     * @param string $html
-     * @return string
-     */
-    private static function normalizar_texto(string $html): string {
-        $plaintext = html_entity_decode(strip_tags((string)$html), ENT_QUOTES, 'UTF-8');
-        return preg_replace('/\s+/u', ' ', trim($plaintext));
-    }
-
-    /**
-     * Helper: comprueba si el HTML de un label contiene (relajado) todas las palabras de la frase
-     * con cualquier cantidad de espacios intermedios. Ignora mayúsculas/minúsculas y saltos.
-     * @param string $html
-     * @param string $frase
-     * @return bool
-     */
-    private static function label_contiene_frase_relajada(string $html, string $frase): bool {
-        $normalized = self::quitar_tildes(self::normalizar_texto($html));
-        $parts = preg_split('/\s+/u', trim(self::quitar_tildes($frase)));
-        if (empty($parts)) {
-            return false;
-        }
-        $pattern = '/'.implode('\s+', array_map('preg_quote', $parts)).'/iu';
-        return (bool)preg_match($pattern, $normalized);
-    }
-
-    /**
-     * Helper genérico: devuelve true si existe en la sección 0 un label que contenga
-     * (a) una tabla (<table) y (b) la frase relajada indicada, excluyendo labels que contengan
-     * todas las claves de exclusión (por ejemplo, datos de tutoría).
-     *
-     * Acepta $section0id nullable para evitar TypeError en contextos (por ejemplo, página principal)
-     * donde no exista la sección 0 en la base de datos.
-     *
-     * @param int $courseid
-     * @param int|null $section0id
-     * @param string $frase
-     * @param array $clavesexclusion (cada clave debe aparecer para excluir)
-     * @return bool
-     */
-    private static function existe_label_con_tabla_y_frase(int $courseid, ?int $section0id, string $frase, array $clavesexclusion = []): bool {
-        global $DB;
-        if (!$section0id) {
-            return false;
-        }
-        $labelmoduleid = $DB->get_field('modules', 'id', ['name' => 'label'], IGNORE_MISSING);
-        if (!$labelmoduleid) {
-            return false;
-        }
-        $cms = $DB->get_records('course_modules', [
-            'course' => $courseid,
-            'section' => $section0id,
-            'module' => $labelmoduleid
-        ]);
-        if (!$cms) {
-            return false;
-        }
-        $instances = array_map(fn($cm) => $cm->instance, $cms);
-        list($in, $params) = $DB->get_in_or_equal($instances, SQL_PARAMS_NAMED);
-        $labels = $DB->get_records_select('label', "id $in", $params);
-        foreach ($labels as $label) {
-            $html = (string)$label->intro;
-            if (stripos($html, '<table') === false) {
-                continue;
-            }
-            if (!self::label_contiene_frase_relajada($html, $frase)) {
-                continue;
-            }
-            if ($clavesexclusion) {
-                $normalized = self::normalizar_para_comparar(self::normalizar_texto($html));
-                $todos = true;
-                foreach ($clavesexclusion as $clave) {
-                    if (is_array($clave)) {
-                        $algunaVariante = false;
-                        foreach ($clave as $variante) {
-                            if (mb_strpos($normalized, self::normalizar_para_comparar($variante)) !== false) {
-                                $algunaVariante = true;
-                                break;
-                            }
-                        }
-                        if (!$algunaVariante) {
-                            $todos = false;
-                            break;
-                        }
-                    } else {
-                        if (mb_strpos($normalized, self::normalizar_para_comparar($clave)) === false) {
-                            $todos = false;
-                            break;
-                        }
-                    }
-                }
-                if ($todos) {
-                    // Es un label de exclusión (ej: tutoría), descartamos.
-                    continue;
-                }
-            }
-            return true;
-        }
-        return false;
-    }
 }

@@ -22,7 +22,9 @@
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 
-require_once(__DIR__ . '/../../config.php');
+// El plugin puede estar symlinkeado: __DIR__ y '..' resolverían el symlink y
+// caerían fuera del árbol de Moodle, así que se recorta SCRIPT_FILENAME.
+require_once(dirname($_SERVER['SCRIPT_FILENAME'], 3) . '/config.php');
 
 require_login();
 $systemcontext = context_system::instance();

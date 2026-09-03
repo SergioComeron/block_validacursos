@@ -1,0 +1,12 @@
+{
+    "name": "sergiocomeron/moodle-block_validacursos",
+    "description": "Moodle validacursos block - dev dependencies",
+    "require-dev": {
+        "moodlehq/moodle-cs": "*"
+    },
+    "config": {
+        "allow-plugins": {
+            "dealerdirect/phpcodesniffer-composer-installer": true
+        }
+    }
+}

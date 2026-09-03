@@ -162,6 +162,84 @@ class block_validacursos extends block_base {
     }
 
     /**
+     * Establece un foro en la configuración del bloque cero (claves forumid / forumestudiantesid / forumtutoriasid).
+     *
+     * @param int $blockinstanceid Id de la instancia del bloque bloquecero.
+     * @param string $configkey Clave de configuración a establecer.
+     * @param int $forumid Id del foro a seleccionar.
+     */
+    private function configurar_foro_bloquecero($blockinstanceid, $configkey, $forumid) {
+        global $DB;
+
+        $bi = $DB->get_record('block_instances',
+            ['id' => $blockinstanceid, 'blockname' => 'bloquecero'], '*', MUST_EXIST);
+
+        $config = !empty($bi->configdata) ? unserialize(base64_decode($bi->configdata)) : new stdClass();
+        if (!is_object($config)) {
+            $config = new stdClass();
+        }
+
+        $config->$configkey = $forumid;
+
+        $bi->configdata = base64_encode(serialize($config));
+        $bi->timemodified = time();
+        $DB->update_record('block_instances', $bi);
+    }
+
+    /**
+     * Añade una instancia del bloque bloquecero al curso en la región content-upper.
+     *
+     * @param stdClass $course
+     */
+    private function crear_bloquecero($course) {
+        global $DB;
+
+        $coursecontext = context_course::instance($course->id);
+
+        // No crear un segundo bloquecero si ya existe uno.
+        if ($DB->record_exists('block_instances', ['blockname' => 'bloquecero', 'parentcontextid' => $coursecontext->id])) {
+            return;
+        }
+
+        $bi = new stdClass();
+        $bi->blockname = 'bloquecero';
+        $bi->parentcontextid = $coursecontext->id;
+        $bi->showinsubcontexts = 0;
+        $bi->requiredbytheme = 0;
+        $bi->pagetypepattern = 'course-view-*';
+        $bi->subpagepattern = null;
+        $bi->defaultregion = 'content-upper'; // Región extra de Boost Union exigida por la validación.
+        $bi->defaultweight = 0;
+        $bi->configdata = '';
+        $bi->timecreated = time();
+        $bi->timemodified = time();
+        $bi->id = $DB->insert_record('block_instances', $bi);
+        context_block::instance($bi->id);
+    }
+
+    /**
+     * Mueve la instancia del bloque cero a la región content-upper.
+     *
+     * Fija la región por defecto y alinea cualquier sobreescritura por página (block_positions)
+     * a la misma región, de modo que la región efectiva sea content-upper en todas las páginas.
+     *
+     * @param int $blockinstanceid Id de la instancia del bloque bloquecero.
+     */
+    private function mover_bloquecero($blockinstanceid) {
+        global $DB;
+
+        // Comprobar que la instancia existe y es un bloquecero.
+        if (!$DB->record_exists('block_instances', ['id' => $blockinstanceid, 'blockname' => 'bloquecero'])) {
+            return;
+        }
+
+        $DB->set_field('block_instances', 'defaultregion', 'content-upper', ['id' => $blockinstanceid]);
+        $DB->set_field('block_instances', 'timemodified', time(), ['id' => $blockinstanceid]);
+        // Alinear las posiciones por página existentes para que no anulen la región por defecto.
+        $DB->set_field('block_positions', 'region', 'content-upper', ['blockinstanceid' => $blockinstanceid]);
+    }
+
+    /**
      * Get content
      *
      * @return stdClass
@@ -215,80 +293,6 @@ class block_validacursos extends block_base {
             }
         }
 
-        if (optional_param('createcronogramaactividades', 0, PARAM_INT)) {
-            require_capability('moodle/course:manageactivities', $context);
-            global $CFG;
-            require_once($CFG->dirroot . '/course/lib.php');
-            require_once($CFG->dirroot . '/course/modlib.php');
-
-            $plugindir = \core_component::get_plugin_directory('block', 'validacursos');
-            $tmplfile = $plugindir . '/content/cronograma_actividades.html';
-            $introhtml = is_readable($tmplfile) ? file_get_contents($tmplfile) : '<p>Cronograma de actividades calificables</p>';
-
-            $data = new stdClass();
-            $data->course = $COURSE->id;
-            $data->modulename = 'label';
-            $data->section = 0;
-            $data->visible = 1;
-            $data->visibleoncoursepage = 1;
-            $data->showdescription = 0;
-            $data->completion = 0;
-            $data->intro = $introhtml;
-            $data->introformat = FORMAT_HTML;
-            $data->introeditor = [
-                'text' => $introhtml,
-                'format' => FORMAT_HTML,
-                'itemid' => 0
-            ];
-            $data->name = 'Cronograma de actividades calificables';
-
-            create_module($data);
-            rebuild_course_cache($COURSE->id, true);
-            redirect(new moodle_url('/course/view.php', ['id' => $COURSE->id]), 'Cronograma de actividades calificables creado', 2);
-        }
-
-        if (optional_param('createcronogramasesiones', 0, PARAM_INT)) {
-            require_capability('moodle/course:manageactivities', $context);
-            global $CFG;
-            require_once($CFG->dirroot . '/course/lib.php');
-            require_once($CFG->dirroot . '/course/modlib.php');
-
-            $tmplfile = $CFG->dirroot . '/blocks/validacursos/content/cronograma_sesiones.html';
-            $introhtml = '';
-            if (is_readable($tmplfile)) {
-                $introhtml = file_get_contents($tmplfile);
-            } else {
-                // Traza para depurar si falla la ruta.
-                debugging('No se puede leer la plantilla: '.$tmplfile, DEBUG_DEVELOPER);
-                $introhtml = '<p>Cronograma de sesiones síncronas</p>';
-            }
-
-            $data = new stdClass();
-            $data->course = $COURSE->id;
-            $data->modulename = 'label';
-            $data->section = 0;
-            $data->visible = 1;
-            $data->visibleoncoursepage = 1;
-            $data->showdescription = 0;
-            $data->completion = 0;
-
-            // Redundancia segura: poner intro e introeditor.
-            $data->intro = $introhtml;
-            $data->introformat = FORMAT_HTML;
-            $data->introeditor = [
-                'text' => $introhtml,
-                'format' => FORMAT_HTML,
-                'itemid' => 0
-            ];
-
-            // (Opcional) nombre interno para identificar el recurso en informes.
-            $data->name = 'Cronograma de sesiones síncronas';
-
-            create_module($data);
-            rebuild_course_cache($COURSE->id, true);
-            redirect(new moodle_url('/course/view.php', ['id' => $COURSE->id]), 'Cronograma de sesiones síncronas creado', 2);
-        }
-
         // Procesar cambio de fecha de fin si se solicita y el usuario tiene permisos
         if (optional_param('changeenddate', 0, PARAM_INT)) {
             require_capability('moodle/course:update', $context);
@@ -315,6 +319,36 @@ class block_validacursos extends block_base {
             require_capability('moodle/course:manageactivities', $context);
             $this->crear_foro_estudiantes($COURSE);
             redirect(new moodle_url('/course/view.php', ['id' => $COURSE->id]), 'Foro de comunicación entre estudiantes creado', 2);
+        }
+
+        // Añadir el bloque cero al curso si se solicita y el usuario tiene permisos.
+        if (optional_param('addbloquecero', 0, PARAM_INT)) {
+            require_capability('moodle/course:update', $context);
+            $this->crear_bloquecero($COURSE);
+            redirect(new moodle_url('/course/view.php', ['id' => $COURSE->id]), 'Bloque cero añadido', 2);
+        }
+
+        // Mover el bloque cero a la región content-upper si se solicita y el usuario tiene permisos.
+        if (optional_param('movebloquecero', 0, PARAM_INT)) {
+            require_capability('moodle/course:update', $context);
+            $blockid = optional_param('blockid', 0, PARAM_INT);
+            if ($blockid) {
+                $this->mover_bloquecero($blockid);
+                redirect(new moodle_url('/course/view.php', ['id' => $COURSE->id]), 'Bloque cero movido a la región correcta', 2);
+            }
+        }
+
+        // Configurar un foro en el bloque cero si se solicita y el usuario tiene permisos.
+        if (optional_param('configforobloquecero', 0, PARAM_INT)) {
+            require_capability('moodle/course:update', $context);
+            $blockid = optional_param('blockid', 0, PARAM_INT);
+            $configkey = optional_param('configkey', '', PARAM_ALPHANUMEXT);
+            $forumid = optional_param('forumid', 0, PARAM_INT);
+            $allowedkeys = ['forumid', 'forumestudiantesid', 'forumtutoriasid'];
+            if ($blockid && $forumid && in_array($configkey, $allowedkeys, true)) {
+                $this->configurar_foro_bloquecero($blockid, $configkey, $forumid);
+                redirect(new moodle_url('/course/view.php', ['id' => $COURSE->id]), 'Foro configurado en el bloque cero', 2);
+            }
         }
 
         // Activar finalización del curso si se solicita
@@ -403,31 +437,39 @@ class block_validacursos extends block_base {
                 if ($val['nombre'] === 'Fecha de fin' && !$val['estado'] && $label === 'Curso' && has_capability('moodle/course:update', $context)) {
                     $html .= ' <button title="Corregir la fecha por la configurada" style="border:none;background:none;padding:0;margin-left:6px;cursor:pointer;" onclick="if(confirm(\'¿Quieres corregir la fecha de fin del curso por la configurada?\')){window.location.href=\'?changeenddate=1&id=' . $COURSE->id . '\';}"><span style="font-size:1.1em;color:#007bff;">&#9998;</span></button>';
                 }
-                // Botones para foros: cambiar tipo (↻) y crear (+).
+                // Botones para el bloque cero: añadir (+) si no existe, o mover (➜) si está mal ubicado.
+                if ($val['nombre'] === 'Bloque cero' && !$val['estado'] && $label === 'Estado'
+                    && has_capability('moodle/course:update', $context)) {
+                    if (empty($val['detalle']['_existe'])) {
+                        $html .= ' <button title="Añadir el bloque cero al curso" style="border:none;background:none;padding:0;margin-left:6px;cursor:pointer;" onclick="if(confirm(\'¿Quieres añadir el bloque cero al curso?\')){window.location.href=\'?addbloquecero=1&id=' . $COURSE->id . '\';}"><span style="font-size:1.1em;color:#28a745;">&#10133;</span></button>';
+                    } else if (!empty($val['detalle']['_blockinstanceid'])) {
+                        $bcid = (int)$val['detalle']['_blockinstanceid'];
+                        $html .= ' <button title="Mover el bloque cero a la región correcta" style="border:none;background:none;padding:0;margin-left:6px;cursor:pointer;" onclick="if(confirm(\'¿Quieres mover el bloque cero a la región correcta?\')){window.location.href=\'?movebloquecero=1&blockid=' . $bcid . '&id=' . $COURSE->id . '\';}"><span style="font-size:1.1em;color:#007bff;">&#10138;</span></button>';
+                    }
+                }
+                // Botones para foros: configurar en bloque cero (⚙), cambiar tipo (✏) y crear (+).
                 $foros_con_boton = [
                     'Foro de tutorías de la asignatura' => 'createforotutorias',
                     'Foro de comunicación entre estudiantes' => 'createforoestudiantes',
                 ];
-                if (isset($foros_con_boton[$val['nombre']]) && !$val['estado'] && $label === 'Estado' && has_capability('moodle/course:manageactivities', $context)) {
-                    if (!empty($val['detalle']['_forumid']) && !empty($val['detalle']['Tipo requerido'])) {
-                        $fid = (int)$val['detalle']['_forumid'];
-                        $reqtype = $val['detalle']['Tipo requerido'];
-                        $html .= ' <button title="Cambiar el tipo del foro existente a ' . s($reqtype) . '" style="border:none;background:none;padding:0;margin-left:6px;cursor:pointer;" onclick="if(confirm(\'¿Quieres cambiar el tipo del foro existente a ' . s($reqtype) . '?\')){window.location.href=\'?changeforumtype=' . $fid . '&newtype=' . urlencode($reqtype) . '&id=' . $COURSE->id . '\';}"><span style="font-size:1.1em;color:#007bff;">&#9998;</span></button>';
+                if (!$val['estado'] && $label === 'Estado' && isset($val['detalle']['_configkey'])) {
+                    $foro_existe = !empty($val['detalle']['_foro_existe']);
+                    $blockid = (int)($val['detalle']['_bloquecero_instanceid'] ?? 0);
+                    if ($foro_existe && $blockid > 0 && has_capability('moodle/course:update', $context)) {
+                        // El foro ya existe: ofrecer seleccionarlo en la configuración del bloque cero.
+                        $cfgkey = $val['detalle']['_configkey'];
+                        $fidvalido = (int)($val['detalle']['_foro_id_valido'] ?? 0);
+                        $html .= ' <button title="Configurar este foro en el bloque cero" style="border:none;background:none;padding:0;margin-left:6px;cursor:pointer;" onclick="if(confirm(\'¿Configurar este foro en el bloque cero?\')){window.location.href=\'?configforobloquecero=1&blockid=' . $blockid . '&configkey=' . $cfgkey . '&forumid=' . $fidvalido . '&id=' . $COURSE->id . '\';}"><span style="font-size:1.1em;color:#007bff;">&#9881;</span></button>';
+                    } else if (!$foro_existe && isset($foros_con_boton[$val['nombre']]) && has_capability('moodle/course:manageactivities', $context)) {
+                        // El foro no existe: ofrecer cambiar el tipo (si hay uno con el nombre y tipo erróneo) o crearlo.
+                        if (!empty($val['detalle']['_forumid']) && !empty($val['detalle']['Tipo requerido'])) {
+                            $fid = (int)$val['detalle']['_forumid'];
+                            $reqtype = $val['detalle']['Tipo requerido'];
+                            $html .= ' <button title="Cambiar el tipo del foro existente a ' . s($reqtype) . '" style="border:none;background:none;padding:0;margin-left:6px;cursor:pointer;" onclick="if(confirm(\'¿Quieres cambiar el tipo del foro existente a ' . s($reqtype) . '?\')){window.location.href=\'?changeforumtype=' . $fid . '&newtype=' . urlencode($reqtype) . '&id=' . $COURSE->id . '\';}"><span style="font-size:1.1em;color:#007bff;">&#9998;</span></button>';
+                        }
+                        $action = $foros_con_boton[$val['nombre']];
+                        $html .= ' <button title="Crear ' . s($val['nombre']) . ' en la sección 0" style="border:none;background:none;padding:0;margin-left:6px;cursor:pointer;" onclick="if(confirm(\'¿Quieres crear ' . addslashes($val['nombre']) . ' en la sección 0?\')){window.location.href=\'?' . $action . '=1&id=' . $COURSE->id . '\';}"><span style="font-size:1.1em;color:#28a745;">&#10133;</span></button>';
                     }
-                    $action = $foros_con_boton[$val['nombre']];
-                    $html .= ' <button title="Crear ' . s($val['nombre']) . ' en la sección 0" style="border:none;background:none;padding:0;margin-left:6px;cursor:pointer;" onclick="if(confirm(\'¿Quieres crear ' . addslashes($val['nombre']) . ' en la sección 0?\')){window.location.href=\'?' . $action . '=1&id=' . $COURSE->id . '\';}"><span style="font-size:1.1em;color:#28a745;">&#10133;</span></button>';
-                }
-                // Mostrar botón solo si es la validación del cronograma de sesiones síncronas, no está validada y el usuario tiene permisos
-                if ($val['nombre'] === 'Cronograma de sesiones síncronas en bloque cero'
-                    && !$val['estado']
-                    && has_capability('moodle/course:manageactivities', $context)) {
-                    $html .= ' <button title="Crear cronograma de sesiones síncronas" style="border:none;background:none;padding:0;margin-left:6px;cursor:pointer;" onclick="if(confirm(\'¿Crear el cronograma de sesiones síncronas en la sección 0?\')){window.location.href=\'?createcronogramasesiones=1&id=' . $COURSE->id . '\';}"><span style="font-size:1.1em;color:#28a745;">&#10133;</span></button>';
-                }
-
-                if ($val['nombre'] === 'Cronograma de actividades calificables en bloque cero'
-                    && !$val['estado']
-                    && has_capability('moodle/course:manageactivities', $context)) {
-                    $html .= ' <button title="Crear cronograma de actividades calificables" style="border:none;background:none;padding:0;margin-left:6px;cursor:pointer;" onclick="if(confirm(\'¿Crear el cronograma de actividades calificables en la sección 0?\')){window.location.href=\'?createcronogramaactividades=1&id=' . $COURSE->id . '\';}"><span style="font-size:1.1em;color:#28a745;">&#10133;</span></button>';
                 }
                 // Botón para activar finalización del curso
                 if ($val['nombre'] === 'Finalización de curso activada' && !$val['estado'] && $label === 'Estado' && has_capability('moodle/course:update', $context)) {
