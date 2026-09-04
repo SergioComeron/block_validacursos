@@ -4,8 +4,10 @@ on:
   push:
     branches:
       - master
+  workflow_dispatch:
 
 permissions:
+  actions: write
   contents: write
   pull-requests: write
 
@@ -41,6 +43,9 @@ jobs:
             done
             echo "Merging release PR #$PR"
             gh pr merge "$PR" --repo "$GITHUB_REPOSITORY" --merge
+            # GITHUB_TOKEN merges do not retrigger push workflows; dispatch
+            # the same workflow so the GitHub Release and ZIP are published.
+            gh workflow run "Release Please" --repo "$GITHUB_REPOSITORY" --ref master
           else
             echo "No open release PR found"
           fi
